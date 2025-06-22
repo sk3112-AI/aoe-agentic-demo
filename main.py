@@ -1,8 +1,8 @@
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain.llms import OpenAI
 from langchain.prompts import PromptTemplate
-from dotenv import load_dotenv
 import datetime
 import uvicorn
 import smtplib
@@ -11,30 +11,9 @@ from email.mime.multipart import MIMEMultipart
 import os
 from fastapi.middleware.cors import CORSMiddleware
 # ----------------------
-# Load environment variables from .env file
-# ----------------------
-load_dotenv()
-
-# ----------------------
 # LangChain + OpenAI Setup
 # ----------------------
-openai_key = os.getenv("OPENAI_API_KEY")
-llm = OpenAI(openai_api_key=openai_key, temperature=0.7)
-
-prompt_template = PromptTemplate(
-    input_variables=["vehicle", "location", "date"],
-    template="""
-    Create a high-conversion test drive Google ad headline and a short, compelling description.
-
-    Vehicle: {vehicle}
-    Location: {location}
-    Date: {date}
-
-    Format:
-    Headline: <headline>
-    Description: <description>
-    """
-)
+llm = OpenAI(temperature=0.7)
 
 # ----------------------
 # FastAPI App Setup
@@ -82,33 +61,56 @@ def send_email(to_email, subject, body):
 @app.post("/webhook/testdrive")
 async def testdrive_handler(payload: TestDriveRequest):
     try:
-        # Generate Ad Text
-        prompt = prompt_template.format(
-            vehicle=payload.vehicle,
-            location=payload.location,
-            date=payload.date
-        )
+        # Determine persona & intro by vehicle
+        vehicle_type = payload.vehicle.lower()
+
+        if "apex" in vehicle_type:
+            persona = "luxury sedan buyer looking for comfort, sophistication, and performance"
+            intro = f"The AOE Apex is the pinnacle of luxury, blending elegant design with exhilarating performance."
+        elif "thunder" in vehicle_type:
+            persona = "performance SUV enthusiast who values power, space, and versatility"
+            intro = f"The AOE Thunder delivers unmatched power and adaptability—perfect for those who crave both comfort and adventure."
+        elif "volt" in vehicle_type:
+            persona = "eco-conscious electric vehicle adopter seeking cutting-edge innovation and sustainability"
+            intro = f"The AOE Volt is engineered for the future—eco-friendly, tech-packed, and exhilarating to drive."
+        else:
+            persona = "car enthusiast"
+            intro = f"The AOE {payload.vehicle} is built to exceed expectations with design and technology that stands out."
+
+        # LangChain prompt
+        prompt = f"""
+Act as a copywriter for a car company. Write a high-conversion short paragraph to build excitement for a customer who booked a test drive.
+Target: {persona}
+Vehicle: {payload.vehicle}
+Location: {payload.location}
+Date: {payload.date}
+
+Format:
+Headline: <headline>
+Body: <body>
+        """
 
         ad_output = llm(prompt).strip()
 
-        # Format ad for email
+        # Customer email
         customer_email_body = f"""
 Hi {payload.fullName},
 
-Thank you for booking a test drive for the AOE {payload.vehicle}.
+Thank you for booking a test drive for the AOE {payload.vehicle}!
 
-Here’s your personalized ad preview:
+{intro}
 
 {ad_output}
 
-We’ll contact you soon to confirm your appointment.
+We’ll contact you shortly to confirm the appointment and share further details.
 
-Best,
+Warm regards,  
 AOE Motors
         """
 
+        # Internal team email
         team_email_body = f"""
-New Test Drive Lead Received:
+New Test Drive Lead:
 
 Name: {payload.fullName}
 Email: {payload.email}
@@ -117,20 +119,28 @@ Vehicle: {payload.vehicle}
 Location: {payload.location}
 Date: {payload.date}
 
-Generated Ad:
+Generated Content:
 {ad_output}
         """
 
-        # Send emails
-        send_email(payload.email, f"Your AOE {payload.vehicle} Test Drive Ad", customer_email_body)
+        # Send both emails
+        send_email(
+            payload.email,
+            subject=f"Thank you for booking your AOE {payload.vehicle} test drive!",
+            body=customer_email_body
+        )
 
         internal_team_email = os.getenv("TEAM_EMAIL")
-        send_email(internal_team_email, f"[New Lead] AOE {payload.vehicle}", team_email_body)
+        send_email(
+            internal_team_email,
+            subject=f"[New Lead] AOE {payload.vehicle}",
+            body=team_email_body
+        )
 
         return {
             "customer": payload.fullName,
             "vehicle": payload.vehicle,
-            "generated_ad": ad_output,
+            "generated_text": ad_output,
             "timestamp": datetime.datetime.utcnow().isoformat()
         }
 
@@ -152,7 +162,7 @@ async def preview_ui():
     return html_content
 
 # ----------------------
-# Run the app (local dev only)
+# Run the app (for local testing only)
 # ----------------------
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
