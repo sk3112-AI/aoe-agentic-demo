@@ -182,7 +182,7 @@ async def testdrive_webhook(request: Request):
         body_prompt = f"""
         You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
 
-        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written.
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written, be easy to read, properly spaced out, **concise, and relevant, avoiding any unnecessary length or fluff.**
 
         **Customer Details:**
         - Full Name: {full_name}
@@ -199,23 +199,24 @@ async def testdrive_webhook(request: Request):
 
         **Instructions for Email Content:**
         1.  Start with an exciting and warm greeting to {full_name}. Confirm the test drive details (vehicle, date, location) immediately, emphasizing the excitement.
-        2.  **Narrative Feature Integration & Elegant Comparison:**
+        2.  **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.** The subject is handled separately.
+        3.  **Narrative Feature Integration & Elegant Comparison:**
             - Weave the {vehicle}'s key features ({chosen_aoe_features}) into one or two flowing paragraphs. Focus on the *experience* and *benefits* these features provide.
             - If `current_vehicle` is provided (not 'no vehicle' or 'exploring'), subtly integrate a comparison that positions the {vehicle} as a significant upgrade or "next level" experience. For example, "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation" or "If you're upgrading from a {current_vehicle}, discover how the {vehicle} elevates your drive." Avoid blunt or direct negative comparisons. Make it about transformation and advancement.
             - If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting opportunity for a new kind of driving experience or a leap into advanced electric vehicles.
-        3.  **Time Frame Personalization (Seamless Paragraph):**
+        4.  **Time Frame Personalization (Seamless Paragraph):**
             - Incorporate the message for the '{time_frame}' without a separate sub-heading.
             - If `time_frame` is '0-3-months': Emphasize that their test drive comes at the perfect moment, hinting at limited-time offers, exclusive benefits, and an unparalleled ownership experience for those ready to embrace the future now.
             - If `time_frame` is '3-6-months' or '6-12-months': Focus on offering support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're ready.
             - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free.
-        4.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
-        5.  End with a warm closing from "Team AOE Motors".
-        6.  **Overall Tone & Format:** Maintain a highly persuasive, enthusiastic, and human-like tone. Use natural, well-structured paragraphs; avoid bullet points for features in the final output. Do NOT include subject line, sender/recipient details, or any section dividers (like ---).
+        5.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
+        6.  End with a warm closing from "Team AOE Motors".
+        7.  **Formatting for Readability:** Use short, distinct paragraphs (with clear line breaks between them) to improve readability and natural flow. Avoid long, dense blocks of text. Do NOT include any section dividers (like ---).
         """
         body_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # Consider "gpt-4o" for better quality if available and cost allows
+            model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, and human-like test drive confirmation emails."},
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Focus solely on the email body content."},
                 {"role": "user", "content": body_prompt}
             ],
             temperature=0.7,
@@ -324,7 +325,7 @@ async def testdrive_webhook(request: Request):
             cursor.execute('''
                 INSERT INTO bookings (full_name, email, phone, vehicle, booking_date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)) # Corrected closing of triple-quoted string
+            ''', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
             conn.commit()
             conn.close()
             logging.info(f"Booking for {email} saved to database with lead score '{lead_score}'.")
