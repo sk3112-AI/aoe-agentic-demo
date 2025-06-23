@@ -115,7 +115,7 @@ AOE Motors
 
         # Send to internal marketing/sales team
         internal_email = os.getenv("TEAM_EMAIL") or "sales@aoemotors.com"
-        internal_body = f"""New Test Drive Lead:
+        internal_body = f"New Test Drive Lead:
 
 Name: {payload.fullName}
 Email: {payload.email}
