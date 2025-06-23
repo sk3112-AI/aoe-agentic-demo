@@ -123,7 +123,7 @@ async def testdrive_webhook(request: Request):
     # Determine tone based on time frame for email body and subject
     tone_instruction_body = "The tone should be enthusiastic and persuasive, highlighting immediate benefits."
     tone_instruction_subject = "Use a highly persuasive and exciting tone."
-    if time_frame == "0-3-months": # Corrected from "0-3-months" to match common input, if your frontend sends "0-3-months"
+    if time_frame == "0-3-months":
         tone_instruction_body = "The tone should be highly persuasive, emphasizing immediate benefits and limited-time offers."
         tone_instruction_subject = "Use a highly persuasive and exciting tone, suggesting urgency."
     elif time_frame == "3-6-months":
@@ -168,7 +168,7 @@ async def testdrive_webhook(request: Request):
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects."},
-                {"role_name": "user", "content": subject_prompt}
+                {"role": "user", "content": subject_prompt} # Corrected 'role_name' to 'role'
             ],
             temperature=0.7,
             max_tokens=50
@@ -213,7 +213,7 @@ async def testdrive_webhook(request: Request):
             model="gpt-3.5-turbo", # Consider "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors."},
-                {"role_name": "user", "content": body_prompt}
+                {"role": "user", "content": body_prompt} # Corrected 'role_name' to 'role'
             ],
             temperature=0.7,
             max_tokens=500
@@ -242,7 +242,7 @@ async def testdrive_webhook(request: Request):
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are an AI assistant for lead classification."},
-                {"role_name": "user", "content": lead_scoring_prompt}
+                {"role": "user", "content": lead_scoring_prompt} # Corrected 'role_name' to 'role'
             ],
             temperature=0.0,
             max_tokens=10
