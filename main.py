@@ -324,7 +324,7 @@ async def testdrive_webhook(request: Request):
             cursor.execute('''
                 INSERT INTO bookings (full_name, email, phone, vehicle, booking_date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
+            ''', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)) # Corrected closing of triple-quoted string
             conn.commit()
             conn.close()
             logging.info(f"Booking for {email} saved to database with lead score '{lead_score}'.")
