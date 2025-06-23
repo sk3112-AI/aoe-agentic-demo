@@ -1,32 +1,35 @@
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain.llms import OpenAI
 from langchain.prompts import PromptTemplate
 import datetime
-import uvicorn
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
-from fastapi.middleware.cors import CORSMiddleware
+
 # ----------------------
 # LangChain + OpenAI Setup
 # ----------------------
 llm = OpenAI(temperature=0.7)
 
 prompt_template = PromptTemplate(
-    input_variables=["vehicle", "location", "date", "current_vehicle", "purchase_timeframe"],
-    template="""
-You are a persuasive automotive sales expert. Create a high-conversion follow-up email for a customer who booked a test drive. Personalize the tone based on vehicle type and urgency. Highlight key features of the vehicle and the value of upgrading from their current brand.
+    input_variables=["vehicle", "location", "date", "current_vehicle", "time_frame"],
+    template="""You are a persuasive automotive sales assistant. Create a short, engaging follow-up message for a customer who booked a test drive.
 
 Vehicle: {vehicle}
 Location: {location}
-Test Drive Date: {date}
-Current Vehicle: {current_vehicle}
-Time Frame to Purchase: {purchase_timeframe}
+Date: {date}
+Currently drives: {current_vehicle}
+Purchase timeline: {time_frame}
 
-Output only the message body, without labels like 'Headline:' or 'Description:'. Avoid repeating "AOE" if already included in the vehicle name.
+Mention 2 key features of the {vehicle} from the AOE Motors lineup (Apex, Thunder, or Volt), and subtly compare with {current_vehicle} if applicable. If purchase timeline is within 3 months, use an encouraging and urgent tone. Otherwise, be friendly and informative.
+
+Output:
+<subject>
+<message body>
 """
 )
 
@@ -34,19 +37,15 @@ Output only the message body, without labels like 'Headline:' or 'Description:'.
 # FastAPI App Setup
 # ----------------------
 app = FastAPI()
-origins = [
-    "https://aoe-motors.lovable.app",
-    "http://localhost:3000",
-    "http://127.0.0.1:8000"
-]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 class TestDriveRequest(BaseModel):
     fullName: str
     email: str
@@ -54,8 +53,8 @@ class TestDriveRequest(BaseModel):
     vehicle: str
     date: str
     location: str
-    current_vehicle: str
-    purchase_timeframe: str
+    currentVehicle: str
+    timeFrame: str
 
 # ----------------------
 # Email Sending Function
@@ -82,49 +81,33 @@ async def testdrive_handler(payload: TestDriveRequest):
             vehicle=payload.vehicle,
             location=payload.location,
             date=payload.date,
-            current_vehicle=payload.current_vehicle,
-            purchase_timeframe=payload.purchase_timeframe
+            current_vehicle=payload.currentVehicle,
+            time_frame=payload.timeFrame
         )
-
         ad_output = llm(prompt).strip()
 
-        vehicle_display_name = payload.vehicle.replace("AOE ", "").replace("AOE", "").strip()
-        subject = f"Thank you for booking your AOE {vehicle_display_name} test drive"
+        if "\n" in ad_output:
+            subject, body = ad_output.split("\n", 1)
+        else:
+            subject, body = "Thank you for booking your test drive", ad_output
 
-        email_body = f"""
-Hi {payload.fullName},
+        email_body = f"""Hi {payload.fullName},
 
-Thank you for booking a test drive for the AOE {vehicle_display_name}.
+{body.strip()}
 
-{ad_output}
-
-We look forward to welcoming you for your test drive.
+We'll get in touch soon to confirm your test drive appointment.
 
 Best,  
-AOE Motors
-""".strip()
+Team AOE Motors"""
 
         send_email(
             to_email=payload.email,
-            subject=subject,
+            subject=subject.strip(),
             body=email_body
         )
 
         internal_email = os.getenv("TEAM_EMAIL") or "sales@aoemotors.com"
-        internal_body = f"""New Test Drive Lead:
-
-Name: {payload.fullName}
-Email: {payload.email}
-Phone: {payload.phone}
-Vehicle: {payload.vehicle}
-Location: {payload.location}
-Date: {payload.date}
-Current Vehicle: {payload.current_vehicle}
-Timeframe to Purchase: {payload.purchase_timeframe}
-
-Generated Message:
-{ad_output}
-""".strip()
+        internal_body = f"New Test Drive Lead:\n\nName: {payload.fullName}\nEmail: {payload.email}\nPhone: {payload.phone}\nVehicle: {payload.vehicle}\nLocation: {payload.location}\nDate: {payload.date}\nCurrently drives: {payload.currentVehicle}\nPurchase timeframe: {payload.timeFrame}\n\nGenerated Message:\n{ad_output}"
 
         send_email(
             to_email=internal_email,
@@ -137,6 +120,8 @@ Generated Message:
             "vehicle": payload.vehicle,
             "location": payload.location,
             "preferred_date": payload.date,
+            "current_vehicle": payload.currentVehicle,
+            "timeframe": payload.timeFrame,
             "generated_message": ad_output,
             "timestamp": datetime.datetime.utcnow().isoformat()
         }
@@ -144,22 +129,6 @@ Generated Message:
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/preview")
-async def preview_ui():
-    html_content = """
-<html>
-    <head><title>AOE Agent Preview</title></head>
-    <body style='font-family: Arial;'>
-        <h2>AOE Motors - Agentic Ad Generator</h2>
-        <p>Submit your test drive form and view results here via /webhook/testdrive</p>
-        <p>This is a placeholder UI endpoint. You can extend this to read logs or display ad history.</p>
-    </body>
-</html>
-"""
-    return html_content
-
-# ----------------------
-# Run the app (local dev only)
-# ----------------------
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+@app.get("/")
+async def root():
+    return {"status": "AOE Motors agentic AI is live"}
