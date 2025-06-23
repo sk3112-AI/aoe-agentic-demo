@@ -9,7 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
-
+from fastapi.middleware.cors import CORSMiddleware
 # ----------------------
 # LangChain + OpenAI Setup
 # ----------------------
@@ -34,7 +34,19 @@ Output only the message body, without labels like 'Headline:' or 'Description:'.
 # FastAPI App Setup
 # ----------------------
 app = FastAPI()
+origins = [
+    "https://aoe-motors.lovable.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:8000"
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class TestDriveRequest(BaseModel):
     fullName: str
     email: str
