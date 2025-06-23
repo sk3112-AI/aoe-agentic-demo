@@ -15,6 +15,7 @@ import sqlite3
 load_dotenv()
 
 # Logging setup
+# Ensure logs are written to stdout/stderr in production environments like Render
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI()
@@ -88,7 +89,7 @@ print(f"DEBUG: Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
 print(f"DEBUG: Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
 # --- END DEBUG PRINTS ---
 
-# Vehicle feature mapping (from your original script)
+# Vehicle feature mapping
 aoe_features = {
     "AOE Apex": "sleek design, ultra-efficient EV range, and adaptive cruise control.",
     "AOE Thunder": "bold design, sedan-class refinement, and advanced all-wheel drive system.",
@@ -182,7 +183,7 @@ async def testdrive_webhook(request: Request):
         body_prompt = f"""
         You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
 
-        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written, be easy to read, properly spaced out, **concise, and relevant, avoiding any unnecessary length or fluff.**
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written, be easy to read, properly spaced out, concise, and relevant, avoiding any unnecessary length or fluff.
 
         **Customer Details:**
         - Full Name: {full_name}
@@ -212,7 +213,12 @@ async def testdrive_webhook(request: Request):
             - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free, without linking it to the test drive's timing.
         5.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
         6.  End with a warm closing from "Team AOE Motors".
-        7.  **Formatting for Readability:** Use short, distinct paragraphs (with clear line breaks between them) to improve readability and natural flow. Aim for approximately 3-5 main paragraphs in total for conciseness. Do NOT include any section dividers (like ---).
+        7.  **CRITICAL Formatting for Readability and Spacing:**
+            - **Immediately after the greeting, use a double newline (`\n\n`) to start a new paragraph.**
+            - **ALWAYS separate distinct thoughts or sections with a double newline (`\n\n`) to create clear, visually distinct paragraphs.**
+            - **Each paragraph should be short and focused (2-4 sentences max).**
+            - **The entire email should consist of 4-6 short paragraphs for optimal readability.**
+            - Avoid long, dense blocks of text at all costs. Do NOT include any section dividers (like ---).
         """
         body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
