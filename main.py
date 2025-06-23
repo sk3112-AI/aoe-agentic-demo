@@ -168,7 +168,7 @@ async def testdrive_webhook(request: Request):
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects."},
-                {"role": "user", "content": subject_prompt} # Corrected 'role_name' to 'role'
+                {"role": "user", "content": subject_prompt}
             ],
             temperature=0.7,
             max_tokens=50
@@ -177,12 +177,12 @@ async def testdrive_webhook(request: Request):
         logging.debug(f"Generated Subject: '{generated_subject}'")
 
 
-        # --- 2. Generate Complete Email Body ---
+        # --- 2. Generate Complete Email Body (UPDATED PROMPT) ---
         logging.info(f"Attempting to generate email body for {email} using OpenAI...")
         body_prompt = f"""
         You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
 
-        **Goal:** Generate the complete body of a professional and engaging email based on the provided customer information and test drive details.
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written.
 
         **Customer Details:**
         - Full Name: {full_name}
@@ -195,25 +195,28 @@ async def testdrive_webhook(request: Request):
         - Purchase Time Frame: {time_frame}
 
         **AOE Vehicle Features (for {vehicle}):**
-        - {chosen_aoe_features}
+        - {chosen_aoe_features} (e.g., sleek design, ultra-efficient EV range, adaptive cruise control)
 
         **Instructions for Email Content:**
-        1.  Start with a warm greeting to {full_name}.
-        2.  Thank them for booking the test drive for the {vehicle} at the {location} location on {formatted_date}.
-        3.  **Current Vehicle Comparison:**
-            - If the customer has a `current_vehicle` (not 'no vehicle'), gently highlight how the {vehicle}'s features (mentioned above) are a significant upgrade or offer distinct advantages compared to what someone owning a {current_vehicle} might experience. Rely on general knowledge for {current_vehicle} features; avoid highly specific technical comparisons unless explicitly stated in your provided AOE features.
-            - If `current_vehicle` is 'no vehicle', phrase it as an exciting opportunity for someone new to (or upgrading to) an advanced vehicle.
-        4.  **Tone Adjustment based on Time Frame:**
-            - {tone_instruction_body}
-        5.  **Personalization by Location:** Briefly mention something positive or relevant about the {location} if appropriate, or simply integrate it smoothly into the sentence structure.
-        6.  Conclude with a warm closing from "Team AOE Motors".
-        7.  **Format:** Use paragraphs for readability. Do NOT include subject line or sender/recipient details, only the body of the email.
+        1.  Start with an exciting and warm greeting to {full_name}. Confirm the test drive details (vehicle, date, location) immediately, emphasizing the excitement.
+        2.  **Narrative Feature Integration & Elegant Comparison:**
+            - Weave the {vehicle}'s key features ({chosen_aoe_features}) into one or two flowing paragraphs. Focus on the *experience* and *benefits* these features provide.
+            - If `current_vehicle` is provided (not 'no vehicle' or 'exploring'), subtly integrate a comparison that positions the {vehicle} as a significant upgrade or "next level" experience. For example, "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation" or "If you're upgrading from a {current_vehicle}, discover how the {vehicle} elevates your drive." Avoid blunt or direct negative comparisons. Make it about transformation and advancement.
+            - If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting opportunity for a new kind of driving experience or a leap into advanced electric vehicles.
+        3.  **Time Frame Personalization (Seamless Paragraph):**
+            - Incorporate the message for the '{time_frame}' without a separate sub-heading.
+            - If `time_frame` is '0-3-months': Emphasize that their test drive comes at the perfect moment, hinting at limited-time offers, exclusive benefits, and an unparalleled ownership experience for those ready to embrace the future now.
+            - If `time_frame` is '3-6-months' or '6-12-months': Focus on offering support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're ready.
+            - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free.
+        4.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
+        5.  End with a warm closing from "Team AOE Motors".
+        6.  **Overall Tone & Format:** Maintain a highly persuasive, enthusiastic, and human-like tone. Use natural, well-structured paragraphs; avoid bullet points for features in the final output. Do NOT include subject line, sender/recipient details, or any section dividers (like ---).
         """
         body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # Consider "gpt-4o" for better quality if available and cost allows
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for AOE Motors."},
-                {"role": "user", "content": body_prompt} # Corrected 'role_name' to 'role'
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, and human-like test drive confirmation emails."},
+                {"role": "user", "content": body_prompt}
             ],
             temperature=0.7,
             max_tokens=500
@@ -242,7 +245,7 @@ async def testdrive_webhook(request: Request):
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are an AI assistant for lead classification."},
-                {"role": "user", "content": lead_scoring_prompt} # Corrected 'role_name' to 'role'
+                {"role": "user", "content": lead_scoring_prompt}
             ],
             temperature=0.0,
             max_tokens=10
@@ -321,7 +324,7 @@ async def testdrive_webhook(request: Request):
             cursor.execute('''
                 INSERT INTO bookings (full_name, email, phone, vehicle, booking_date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
+            ', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
             conn.commit()
             conn.close()
             logging.info(f"Booking for {email} saved to database with lead score '{lead_score}'.")
