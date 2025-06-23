@@ -1,17 +1,22 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import smtplib
-from email.message import EmailMessage
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
+from dotenv import load_dotenv
+from datetime import datetime
+import logging
 
 # Load environment variables
-from dotenv import load_dotenv
 load_dotenv()
+
+# Logging setup
+logging.basicConfig(filename="email_debug.log", level=logging.DEBUG, format="%(asctime)s - %(message)s")
 
 app = FastAPI()
 
-# Enable CORS for all origins (you can restrict this to specific domains)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,73 +25,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Define the request model
-class TestDriveData(BaseModel):
-    fullName: str
-    email: str
-    phone: str
-    vehicle: str
-    date: str
-    location: str
-    currentVehicle: str
-    timeFrame: str
+# Email config
+EMAIL_HOST = os.getenv("EMAIL_HOST")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT"))
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+TEAM_EMAIL = os.getenv("TEAM_EMAIL")
 
-# Vehicle features from website
-vehicle_features = {
-    "AOE Apex": "sleek design, intuitive driver interface, and turbocharged efficiency",
-    "AOE Thunder": "bold styling, advanced infotainment, and sport-performance tuning",
-    "AOE Volt": "all-electric drivetrain, fast charging, and sustainable innovation"
+# Vehicle feature mapping
+aoe_features = {
+    "AOE Apex": "sleek design, ultra-efficient EV range, and adaptive cruise control.",
+    "AOE Thunder": "bold design, sedan-class refinement, and advanced all-wheel drive system.",
+    "AOE Volt": "instant torque, zero-emission performance, and intelligent connectivity features."
 }
 
-def generate_email_content(data: TestDriveData):
-    features = vehicle_features.get(data.vehicle, "cutting-edge features and next-gen performance")
-    current_vehicle = data.currentVehicle.lower()
-    timeframe = data.timeFrame.lower()
+@app.post("/webhook/testdrive")
+async def testdrive_webhook(request: Request):
+    data = await request.json()
+    full_name = data.get("fullName", "")
+    email = data.get("email", "")
+    phone = data.get("phone", "")
+    vehicle = data.get("vehicle", "")
+    date = data.get("date", "")
+    location = data.get("location", "")
+    current_vehicle = data.get("currentVehicle", "no vehicle").lower()
+    time_frame = data.get("timeFrame", "exploring")
 
-    if current_vehicle == "no vehicle":
-        comparison_line = f"As you consider owning your first vehicle, the {data.vehicle} stands out with its {features}."
+    date_obj = datetime.strptime(date, "%Y-%m-%d")
+    formatted_date = date_obj.strftime("%B %d, %Y")
+
+    # Subject and greeting
+    subject = f"Thank you for booking your {vehicle} test drive"
+    greeting = f"Hi {full_name},"
+
+    # Vehicle-specific features
+    features = aoe_features.get(vehicle, "cutting-edge technology and futuristic design.")
+
+    # Comparison logic
+    comparison = ""
+    if current_vehicle != "no vehicle":
+        comparison = f"As a {current_vehicle.title()} owner, you’ll notice the difference with the {vehicle}'s {features}"
     else:
-        comparison_line = f"As a {current_vehicle.title()} owner, you’ll find the {data.vehicle} offers a compelling upgrade with its {features}."
+        comparison = f"The {vehicle} offers {features} — a leap ahead in automotive innovation."
 
-    if timeframe == "0-3-months":
-        urgency_line = "Since you're planning to purchase soon, our team is ready to assist you with exclusive offers and a personalized buying experience."
-    elif timeframe in ["3-6-months", "6-12-months"]:
-        urgency_line = "We’d be happy to keep in touch and help you explore options as you get closer to your decision."
+    # Urgency messaging
+    urgency = ""
+    if time_frame == "0-3-months":
+        urgency = "Given your interest in purchasing soon, our team is ready to assist with exclusive purchase benefits tailored to you."
+    elif time_frame in ["3-6-months", "6-12-months"]:
+        urgency = "We’ll be here to support you throughout your decision-making journey."
     else:
-        urgency_line = "Feel free to explore the AOE range at your own pace — we’re here whenever you’re ready."
+        urgency = "Explore the future of driving at your own pace — we’re excited to have you experience the AOE difference."
 
-    email_body = f"""Subject: Thank you for booking your {data.vehicle} test drive
+    # Final email body
+    body = f"""{greeting}
 
-Hi {data.fullName},
+Thank you for booking your test drive of the {vehicle} at our {location} location on {formatted_date}.
 
-Thank you for booking your test drive of the {data.vehicle} at our {data.location} location on {data.date}.
+{comparison}
 
-{comparison_line}
-{urgency_line}
+{urgency}
 
 We look forward to seeing you soon.
 
 Warm regards,  
-Team AOE Motors
-"""
-    return email_body
-
-@app.post("/webhook/testdrive")
-async def testdrive_webhook(data: TestDriveData):
-    # Generate email content
-    body = generate_email_content(data)
-
-    # Send Email
-    msg = EmailMessage()
-    msg["Subject"] = f"Thank you for booking your {data.vehicle} test drive"
-    msg["From"] = os.getenv("EMAIL_SENDER")
-    msg["To"] = data.email
-    msg.set_content(body)
+Team AOE Motors"""
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(os.getenv("EMAIL_SENDER"), os.getenv("EMAIL_PASSWORD"))
-            smtp.send_message(msg)
-        return {"message": "Email sent successfully"}
+        # Construct and send email
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_ADDRESS
+        msg["To"] = email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        # Debug log
+        logging.debug(f"✅ Email sent to {email} for test drive on {date} | Current Vehicle: {current_vehicle} | Time Frame: {time_frame}")
+
     except Exception as e:
-        return {"error": str(e)}
+        logging.error(f"❌ Failed to send email to {email}: {str(e)}")
+
+    return {"status": "success", "message": "Test drive data processed"}
