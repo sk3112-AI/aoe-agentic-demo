@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from langchain.llms import OpenAI
 from langchain.prompts import PromptTemplate
 import datetime
+import uvicorn
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -17,20 +18,28 @@ llm = OpenAI(temperature=0.7)
 
 prompt_template = PromptTemplate(
     input_variables=["vehicle", "location", "date", "current_vehicle", "time_frame"],
-    template="""You are a persuasive automotive sales assistant. Create a short, engaging follow-up message for a customer who booked a test drive.
+    template="""
+    You are a persuasive automotive marketing assistant. Create a short, engaging, and personalized message for a customer who just booked a test drive.
 
-Vehicle: {vehicle}
-Location: {location}
-Date: {date}
-Currently drives: {current_vehicle}
-Purchase timeline: {time_frame}
+    Customer currently drives: {current_vehicle}
+    They are planning to purchase in: {time_frame}
+    Interested Vehicle: {vehicle}
+    Test Drive Location: {location}
+    Preferred Date: {date}
 
-Mention 2 key features of the {vehicle} from the AOE Motors lineup (Apex, Thunder, or Volt), and subtly compare with {current_vehicle} if applicable. If purchase timeline is within 3 months, use an encouraging and urgent tone. Otherwise, be friendly and informative.
+    Highlight key features of the {vehicle} and compare subtly with {current_vehicle} if applicable. Be more persuasive if purchase time frame is short (0-3 months). Keep it human, personalized and natural.
 
-Output:
-<subject>
-<message body>
-"""
+    Output format:
+    ---
+    {vehicle} - Test Drive Confirmation
+
+    Hi <customer_name>,
+
+    <dynamic persuasive message>
+
+    Best,
+    AOE Motors
+    """
 )
 
 # ----------------------
@@ -38,9 +47,10 @@ Output:
 # ----------------------
 app = FastAPI()
 
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for now
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,6 +87,7 @@ def send_email(to_email, subject, body):
 @app.post("/webhook/testdrive")
 async def testdrive_handler(payload: TestDriveRequest):
     try:
+        # Generate prompt
         prompt = prompt_template.format(
             vehicle=payload.vehicle,
             location=payload.location,
@@ -84,30 +95,39 @@ async def testdrive_handler(payload: TestDriveRequest):
             current_vehicle=payload.currentVehicle,
             time_frame=payload.timeFrame
         )
-        ad_output = llm(prompt).strip()
 
-        if "\n" in ad_output:
-            subject, body = ad_output.split("\n", 1)
-        else:
-            subject, body = "Thank you for booking your test drive", ad_output
+        ad_output = llm(prompt).strip()
 
         email_body = f"""Hi {payload.fullName},
 
-{body.strip()}
+{ad_output}
 
-We'll get in touch soon to confirm your test drive appointment.
+Best,
+AOE Motors
+        """
 
-Best,  
-Team AOE Motors"""
-
+        # Send to customer
         send_email(
             to_email=payload.email,
-            subject=subject.strip(),
+            subject=f"Thank you for booking your AOE {payload.vehicle} test drive",
             body=email_body
         )
 
+        # Send to internal marketing/sales team
         internal_email = os.getenv("TEAM_EMAIL") or "sales@aoemotors.com"
-        internal_body = f"New Test Drive Lead:\n\nName: {payload.fullName}\nEmail: {payload.email}\nPhone: {payload.phone}\nVehicle: {payload.vehicle}\nLocation: {payload.location}\nDate: {payload.date}\nCurrently drives: {payload.currentVehicle}\nPurchase timeframe: {payload.timeFrame}\n\nGenerated Message:\n{ad_output}"
+        internal_body = f"New Test Drive Lead:
+
+Name: {payload.fullName}
+Email: {payload.email}
+Phone: {payload.phone}
+Vehicle: {payload.vehicle}
+Location: {payload.location}
+Date: {payload.date}
+Current Vehicle: {payload.currentVehicle}
+Timeframe: {payload.timeFrame}
+
+Generated Message:
+{ad_output}"
 
         send_email(
             to_email=internal_email,
@@ -120,9 +140,7 @@ Team AOE Motors"""
             "vehicle": payload.vehicle,
             "location": payload.location,
             "preferred_date": payload.date,
-            "current_vehicle": payload.currentVehicle,
-            "timeframe": payload.timeFrame,
-            "generated_message": ad_output,
+            "generated_ad": ad_output,
             "timestamp": datetime.datetime.utcnow().isoformat()
         }
 
@@ -131,4 +149,4 @@ Team AOE Motors"""
 
 @app.get("/")
 async def root():
-    return {"status": "AOE Motors agentic AI is live"}
+    return {"message": "AOE Agentic AI Test Drive Service is running."}
