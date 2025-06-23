@@ -183,7 +183,7 @@ async def testdrive_webhook(request: Request):
         body_prompt = f"""
         You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
 
-        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email with a natural, story-like flow. The email should sound human-written, be easy to read, properly spaced out, concise, and relevant, avoiding any unnecessary length or fluff.
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email. The email should be easy to read, visually appealing, concise, and relevant, avoiding any unnecessary length or fluff.
 
         **Customer Details:**
         - Full Name: {full_name}
@@ -199,31 +199,29 @@ async def testdrive_webhook(request: Request):
         - {chosen_aoe_features} (e.g., sleek design, ultra-efficient EV range, adaptive cruise control)
 
         **Instructions for Email Content:**
-        1.  Start with an exciting and warm greeting to {full_name}. Confirm the test drive details (vehicle, date, location) immediately, emphasizing the excitement.
+        1.  Start with a warm greeting to {full_name}.
         2.  **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.** The subject is handled separately.
-        3.  **Narrative Feature Integration & Elegant Comparison:**
-            - Weave the {vehicle}'s key features ({chosen_aoe_features}) into one or two flowing paragraphs. Focus on the *experience* and *benefits* these features provide.
-            - If `current_vehicle` is provided (not 'no vehicle' or 'exploring'), subtly integrate a comparison that positions the {vehicle} as a significant upgrade or "next level" experience. For example, "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation" or "If you're upgrading from a {current_vehicle}, discover how the {vehicle} elevates your drive." Avoid blunt or direct negative comparisons. Make it about transformation and advancement.
-            - If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting opportunity for a new kind of driving experience or a leap into advanced electric vehicles.
-        4.  **Time Frame Personalization (Seamless Paragraph):**
-            - Incorporate the message for the '{time_frame}' without a separate sub-heading.
-            - **Important:** The `time_frame` refers to the customer's *purchase intent/readiness*, not the test drive date. Link it to relevant benefits or support for their *purchase journey*.
-            - If `time_frame` is '0-3-months': Emphasize that this test drive is an ideal step for their immediate purchase plans, hinting at limited-time offers, exclusive benefits, and an unparalleled ownership experience for those ready to embrace the future now. Frame it as the perfect moment to align their test drive experience with their upcoming purchase.
-            - If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision.
-            - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free, without linking it to the test drive's timing.
-        5.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
-        6.  End with a warm closing from "Team AOE Motors".
-        7.  **CRITICAL Formatting for Readability and Spacing:**
-            - **Immediately after the greeting, use a double newline (`\n\n`) to start a new paragraph.**
-            - **ALWAYS separate distinct thoughts or sections with a double newline (`\n\n`) to create clear, visually distinct paragraphs.**
-            - **Each paragraph should be short and focused (2-4 sentences max).**
-            - **The entire email should consist of 4-6 short paragraphs for optimal readability.**
-            - Avoid long, dense blocks of text at all costs. Do NOT include any section dividers (like ---).
+        3.  **Strict Paragraph Structuring (using HTML <p> tags):**
+            * **Paragraph 1 (Greeting & Test Drive Confirmation):** Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement. This paragraph should *only* be about the test drive confirmation.
+            * **Paragraph 2 (Vehicle Features & Comparison):** Weave in the {vehicle}'s key features ({chosen_aoe_features}). Focus on the *experience* and *benefits*. If `current_vehicle` is provided, subtly compare it as an upgrade; if 'no vehicle', frame it as an exciting new experience.
+            * **Paragraph 3 (Purchase Time Frame Personalization):** This paragraph will *exclusively* address the '{time_frame}'.
+                * **Important:** The `time_frame` refers to the customer's *purchase intent/readiness*, NOT the test drive date. Link it to relevant benefits or support for their *future purchase journey*.
+                * If `time_frame` is '0-3-months': Frame the test drive as a crucial step for their immediate purchase plans, hinting at exclusive offers for their *upcoming purchase*.
+                * If `time_frame` is '3-6-months' or '6-12-months': Offer continued support and guidance for their decision-making journey, expressing readiness to assist when they're closer to a purchase.
+                * If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery and a pressure-free experience for their future consideration.
+            * **Paragraph 4 (Call to Action & Closing):** Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit. End with a warm closing from "Team AOE Motors".
+        4.  **CRITICAL Formatting Output Rules:**
+            * **The entire email body MUST be formatted using HTML paragraph tags (`<p>...</p>`) for *each* distinct logical section/paragraph as outlined above.**
+            * **Each paragraph (`<p>...</p>`) should be concise, typically 2-4 sentences maximum.**
+            * **The total email body should consist of exactly 4 HTML paragraphs, one for each point above (Greeting/Confirmation, Features, Time Frame, CTA/Closing).**
+            * **Do NOT use `\n\n` for spacing between paragraphs; the `<p>` tags handle the visual separation.**
+            * **Do NOT include any section dividers (like '---').**
+            * **Ensure there is no extra blank space at the beginning or end of the email output. Start immediately with the first `<p>` tag and end with the last `</p>` tag.**
         """
         body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Focus solely on the email body content."},
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs."},
                 {"role": "user", "content": body_prompt}
             ],
             temperature=0.7,
@@ -270,7 +268,7 @@ async def testdrive_webhook(request: Request):
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = email
         msg_customer["Subject"] = generated_subject
-        msg_customer.attach(MIMEText(generated_body, "html")) # Changed to 'html' in case OpenAI generates HTML tags
+        msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
 
         with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
             logging.debug(f"Attempting to connect to SMTP server for customer email: {EMAIL_HOST}:{EMAIL_PORT}")
