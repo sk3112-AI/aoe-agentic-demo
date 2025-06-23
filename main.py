@@ -206,12 +206,13 @@ async def testdrive_webhook(request: Request):
             - If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting opportunity for a new kind of driving experience or a leap into advanced electric vehicles.
         4.  **Time Frame Personalization (Seamless Paragraph):**
             - Incorporate the message for the '{time_frame}' without a separate sub-heading.
-            - If `time_frame` is '0-3-months': Emphasize that their test drive comes at the perfect moment, hinting at limited-time offers, exclusive benefits, and an unparalleled ownership experience for those ready to embrace the future now.
-            - If `time_frame` is '3-6-months' or '6-12-months': Focus on offering support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're ready.
-            - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free.
+            - **Important:** The `time_frame` refers to the customer's *purchase intent/readiness*, not the test drive date. Link it to relevant benefits or support for their *purchase journey*.
+            - If `time_frame` is '0-3-months': Emphasize that this test drive is an ideal step for their immediate purchase plans, hinting at limited-time offers, exclusive benefits, and an unparalleled ownership experience for those ready to embrace the future now. Frame it as the perfect moment to align their test drive experience with their upcoming purchase.
+            - If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision.
+            - If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery, exploration, and making the experience pressure-free, without linking it to the test drive's timing.
         5.  Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit.
         6.  End with a warm closing from "Team AOE Motors".
-        7.  **Formatting for Readability:** Use short, distinct paragraphs (with clear line breaks between them) to improve readability and natural flow. Avoid long, dense blocks of text. Do NOT include any section dividers (like ---).
+        7.  **Formatting for Readability:** Use short, distinct paragraphs (with clear line breaks between them) to improve readability and natural flow. Aim for approximately 3-5 main paragraphs in total for conciseness. Do NOT include any section dividers (like ---).
         """
         body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
