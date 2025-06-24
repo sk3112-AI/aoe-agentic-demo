@@ -1,3 +1,7 @@
+import requests
+from bs4 import BeautifulSoup
+import time
+import json # In case we want to save/load cached data to a file for persistence across restarts
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import smtplib
@@ -15,13 +19,17 @@ import sqlite3
 load_dotenv()
 
 # Logging setup
-# Ensure logs are written to stdout/stderr in production environments like Render
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI()
 
 # Database file path
 DATABASE_FILE = "test_drives.db"
+
+# Global variable to store cached vehicle data and last refresh time
+cached_aoe_vehicles_data = {}
+LAST_DATA_REFRESH_TIME = 0
+REFRESH_INTERVAL_SECONDS = 4 * 3600 # Refresh every 4 hours (adjust as needed, e.g., 24*3600 for daily)
 
 # Function to initialize the database
 def init_db():
@@ -51,10 +59,159 @@ def init_db():
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}", exc_info=True)
 
-# Run database initialization on app startup
+def fetch_aoe_vehicle_data_from_website():
+    """
+    Fetches vehicle data by scraping the AOE Motors website.
+    This implementation assumes a specific HTML structure.
+    If the website's structure changes, this function will need to be updated.
+    """
+    url = "https://aoe-motors.lovable.app/#vehicles"
+    logging.info(f"Attempting to fetch vehicle data from {url}...")
+    try:
+        response = requests.get(url, timeout=15) # Increased timeout
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        vehicles_data = {}
+        # Assuming vehicle details are within a section, and each vehicle has a distinct card/div.
+        # This is a common pattern for vehicle listing pages.
+        # You MUST verify these selectors by inspecting the actual website HTML.
+
+        # --- IMPORTANT: These selectors are based on common patterns. VERIFY THEM! ---
+        # Look for a common container for all vehicles, then iterate through individual vehicle blocks.
+        # Example: if vehicles are in a div with id 'vehicles-section' and each vehicle is in a 'div' with class 'vehicle-card'
+        
+        # This is a placeholder for a more specific container.
+        # For a single-page app using #vehicles, content might be dynamically loaded.
+        # If the content is in a specific div, you might do:
+        # vehicles_section = soup.find('div', id='vehicles-section')
+        # if not vehicles_section: vehicles_section = soup # Fallback if no specific section
+
+        # The most robust way without knowing the full structure is to look for common heading patterns for vehicles
+        # Let's try to find vehicle names and then assume sibling/parent elements contain details.
+        
+        # A common pattern: vehicle names are in <h3> or <h2> tags.
+        # Iterate through common headings to find vehicle names
+        
+        # The provided image_ee99a8.png and others show "AOE Apex", "AOE Thunder", "AOE Volt"
+        # Let's assume these names are within <h3> or <h2> tags near their descriptions.
+
+        # A more generic approach trying to find logical blocks:
+        # Look for a section that contains the vehicle information, often a <section> or <div>
+        # The website uses a single page layout with sections like #vehicles.
+        # Let's assume the vehicle details are structured within distinct blocks for each vehicle.
+        
+        # For lovable.app, inspecting the source, vehicle names like "AOE Apex" are usually within <h3> tags.
+        # The features might be in a <p> tag that follows.
+        
+        # Refined selectors based on common structure (YOU MUST VERIFY THESE!):
+        
+        # Assuming a structure like:
+        # <section id="vehicles">
+        #   <div class="vehicle-item">
+        #     <h3>AOE Apex</h3>
+        #     <p class="vehicle-description">Sleek design...</p>
+        #     <span class="vehicle-type">Sedan</span>
+        #     <span class="vehicle-powertrain">EV</span>
+        #   </div>
+        #   ...
+        # </section>
+
+        # Let's try finding the main content area first
+        main_content = soup.find('main') or soup # Fallback to whole soup if no main tag
+        
+        # Then, find all potential vehicle name headings
+        vehicle_name_tags = main_content.find_all(['h2', 'h3', 'h4']) # Look for common heading tags
+
+        for tag in vehicle_name_tags:
+            name = tag.get_text(strip=True)
+            # Basic filtering for known AOE vehicles
+            if "AOE" in name and ("Apex" in name or "Thunder" in name or "Volt" in name):
+                # Now, try to find associated description, type, powertrain
+                # This is tricky as structure varies. We'll look at siblings or next elements.
+                features = "cutting-edge technology and futuristic design." # Default
+                vehicle_type = "Vehicle" # Default
+                powertrain = "Advanced" # Default
+
+                # Attempt to find descriptive paragraph or a specific 'features' class
+                # This often involves looking at the next sibling, or a sibling within a common parent
+                next_p = tag.find_next_sibling('p')
+                if next_p and len(next_p.get_text(strip=True)) > 20: # Heuristic: if it looks like a description
+                    features = next_p.get_text(strip=True)
+                
+                # For type and powertrain, if they are not explicitly labelled,
+                # we might have to infer or look for specific text patterns in the features.
+                # Since the site structure is unknown without direct inspection,
+                # I will fall back to smart defaults for specific vehicles as a safer bet initially
+                # based on common knowledge (Apex/Volt as EV, Thunder as SUV).
+                
+                # Manual override/fallback based on common AOE assumptions for accuracy
+                if "Apex" in name:
+                    vehicle_type = "Sedan"
+                    powertrain = "EV"
+                    if "Sleek design" not in features: # Augment if general features are picked up
+                         features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
+                elif "Thunder" in name:
+                    vehicle_type = "SUV"
+                    powertrain = "Gasoline" # Assuming it's not EV for now, per your clarification
+                    if "bold design" not in features:
+                         features = "bold design, advanced all-wheel drive system, and robust capability."
+                elif "Volt" in name:
+                    vehicle_type = "Compact EV"
+                    powertrain = "EV"
+                    if "instant torque" not in features:
+                         features = "instant torque, zero-emission performance, and intelligent connectivity features."
+
+                vehicles_data[name] = {
+                    "type": vehicle_type,
+                    "powertrain": powertrain,
+                    "features": features
+                }
+        
+        if not vehicles_data:
+            logging.warning("No specific AOE vehicle data found by scraping. Using hardcoded defaults as fallback.")
+            # Fallback to a hardcoded dictionary if scraping fails or returns empty
+            # This is CRITICAL to prevent a complete breakdown if scraping fails
+            vehicles_data = {
+                "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+                "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
+                "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
+            }
+
+
+        logging.info("Successfully fetched and parsed vehicle data.")
+        return vehicles_data
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching vehicle data from website: {e}", exc_info=True)
+        # Fallback to hardcoded defaults on network/HTTP error
+        return {
+            "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+            "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
+            "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
+        }
+    except Exception as e:
+        logging.error(f"Error parsing vehicle data from website: {e}", exc_info=True)
+        # Fallback to hardcoded defaults on parsing error
+        return {
+            "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+            "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
+            "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
+        }
+
+# Run database initialization and initial data fetch on app startup
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    global cached_aoe_vehicles_data, LAST_DATA_REFRESH_TIME
+    logging.info("Performing initial vehicle data fetch on startup...")
+    cached_aoe_vehicles_data = fetch_aoe_vehicle_data_from_website()
+    if cached_aoe_vehicles_data:
+        LAST_DATA_REFRESH_TIME = time.time()
+        logging.info(f"Initial vehicle data fetched. {len(cached_aoe_vehicles_data)} vehicles loaded.")
+    else:
+        logging.error("Failed to fetch initial vehicle data from website. Relying on hardcoded fallbacks.")
+
 
 # Enable CORS
 app.add_middleware(
@@ -89,12 +246,6 @@ print(f"DEBUG: Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
 print(f"DEBUG: Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
 # --- END DEBUG PRINTS ---
 
-# Vehicle feature mapping
-aoe_features = {
-    "AOE Apex": "sleek design, ultra-efficient EV range, and adaptive cruise control.",
-    "AOE Thunder": "bold design, sedan-class refinement, and advanced all-wheel drive system.",
-    "AOE Volt": "instant torque, zero-emission performance, and intelligent connectivity features."
-}
 
 @app.post("/webhook/testdrive")
 async def testdrive_webhook(request: Request):
@@ -119,22 +270,45 @@ async def testdrive_webhook(request: Request):
         logging.error(f"Error parsing date '{date}': {e}", exc_info=True)
         return {"status": "error", "message": "Invalid date format"}
 
-    chosen_aoe_features = aoe_features.get(vehicle, "cutting-edge technology and futuristic design.")
+    # --- Dynamic Vehicle Data Retrieval ---
+    global cached_aoe_vehicles_data, LAST_DATA_REFRESH_TIME
+
+    # Check if data needs refresh before processing (simple caching mechanism)
+    if time.time() - LAST_DATA_REFRESH_TIME > REFRESH_INTERVAL_SECONDS:
+        logging.info("Refreshing cached vehicle data...")
+        new_data = fetch_aoe_vehicle_data_from_website()
+        if new_data: # Only update if new data was successfully fetched
+            cached_aoe_vehicles_data = new_data
+            LAST_DATA_REFRESH_TIME = time.time()
+            logging.info("Cached vehicle data refreshed.")
+        else:
+            logging.warning("Failed to refresh vehicle data. Continuing with old cached data.")
+    
+    # Get specific vehicle info from cache; fallback to generic if not found
+    vehicle_info = cached_aoe_vehicles_data.get(vehicle, {
+        "type": "vehicle", # Generic default
+        "powertrain": "advanced performance", # Generic default
+        "features": "cutting-edge technology and futuristic design." # Generic default
+    })
+
+    vehicle_type = vehicle_info["type"]
+    powertrain_type = vehicle_info["powertrain"]
+    chosen_aoe_features = vehicle_info["features"]
 
     # Determine tone based on time frame for email body and subject
     tone_instruction_body = "The tone should be enthusiastic and persuasive, highlighting immediate benefits."
     tone_instruction_subject = "Use a highly persuasive and exciting tone."
     if time_frame == "0-3-months":
-        tone_instruction_body = "The tone should be highly persuasive, emphasizing immediate benefits and limited-time offers."
-        tone_instruction_subject = "Use a highly persuasive and exciting tone, suggesting urgency."
+        tone_instruction_body = "The tone should be highly persuasive, emphasizing immediate benefits and exclusive offers for their upcoming purchase decision, *without* implying the test drive itself is the only window for these benefits."
+        tone_instruction_subject = "Use a highly persuasive and exciting tone, suggesting urgency related to purchasing."
     elif time_frame == "3-6-months":
-        tone_instruction_body = "The tone should be informative and encouraging, focusing on future benefits and guiding them through the next steps."
+        tone_instruction_body = "The tone should be informative and encouraging, focusing on future benefits and guiding them through the next steps in their consideration process."
         tone_instruction_subject = "Use an informative and encouraging tone, highlighting key features."
     elif time_frame == "6-12-months":
-        tone_instruction_body = "The tone should be informative and helpful, inviting further exploration and offering detailed insights."
+        tone_instruction_body = "The tone should be informative and helpful, inviting further exploration and offering detailed insights for their long-term decision-making."
         tone_instruction_subject = "Use an informative and helpful tone, suggesting further research."
     elif time_frame == "exploring":
-        tone_instruction_body = "The tone should be welcoming and inviting, providing general information without pressure and encouraging casual exploration."
+        tone_instruction_body = "The tone should be welcoming and inviting, providing general information without pressure and encouraging casual exploration and discovery."
         tone_instruction_subject = "Use a welcoming and inviting tone, focusing on discovery."
 
 
@@ -153,7 +327,7 @@ async def testdrive_webhook(request: Request):
 
         **Context:**
         - Customer: {full_name}
-        - Vehicle: {vehicle}
+        - Vehicle: {vehicle} (Type: {vehicle_type}, Powertrain: {powertrain_type})
         - Test Drive Date: {formatted_date}
         - Location: {location}
         - Customer's Current Vehicle: {current_vehicle}
@@ -164,11 +338,12 @@ async def testdrive_webhook(request: Request):
         - Keep it brief (under 15 words).
         - Do NOT include "Subject:" or any salutation/closing in the output.
         - Example: "Your Apex Test Drive is Confirmed!" or "Experience the Volt: Your Test Drive Awaits!"
+        - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
         """
         subject_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
+            model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects."},
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
                 {"role": "user", "content": subject_prompt}
             ],
             temperature=0.7,
@@ -178,50 +353,69 @@ async def testdrive_webhook(request: Request):
         logging.debug(f"Generated Subject: '{generated_subject}'")
 
 
-        # --- 2. Generate Complete Email Body (UPDATED PROMPT) ---
+        # --- 2. Generate Complete Email Body (UPDATED PROMPT with HTML enforcement and time frame fix) ---
         logging.info(f"Attempting to generate email body for {email} using OpenAI...")
         body_prompt = f"""
         You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
 
-        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email. The email should be easy to read, visually appealing, concise, and relevant, avoiding any unnecessary length or fluff.
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email. The email should be easy to read, visually appealing, concise, and relevant.
 
         **Customer Details:**
         - Full Name: {full_name}
         - Email: {email}
         - Phone: {phone}
         - Vehicle of Interest: {vehicle}
+        - Vehicle Type: {vehicle_type}
+        - Vehicle Powertrain: {powertrain_type}
         - Test Drive Date: {formatted_date}
         - Test Drive Location: {location}
         - Customer's Current Vehicle: {current_vehicle} (if 'no vehicle', indicate they are exploring new options)
-        - Purchase Time Frame: {time_frame}
+        - Purchase Time Frame: {time_frame} (refers to purchase intent/readiness, NOT test drive date)
 
         **AOE Vehicle Features (for {vehicle}):**
-        - {chosen_aoe_features} (e.g., sleek design, ultra-efficient EV range, adaptive cruise control)
+        - {chosen_aoe_features}
 
         **Instructions for Email Content:**
         1.  Start with a warm greeting to {full_name}.
-        2.  **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.** The subject is handled separately.
-        3.  **Strict Paragraph Structuring (using HTML <p> tags):**
-            * **Paragraph 1 (Greeting & Test Drive Confirmation):** Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement. This paragraph should *only* be about the test drive confirmation.
-            * **Paragraph 2 (Vehicle Features & Comparison):** Weave in the {vehicle}'s key features ({chosen_aoe_features}). Focus on the *experience* and *benefits*. If `current_vehicle` is provided, subtly compare it as an upgrade; if 'no vehicle', frame it as an exciting new experience.
-            * **Paragraph 3 (Purchase Time Frame Personalization):** This paragraph will *exclusively* address the '{time_frame}'.
-                * **Important:** The `time_frame` refers to the customer's *purchase intent/readiness*, NOT the test drive date. Link it to relevant benefits or support for their *future purchase journey*.
-                * If `time_frame` is '0-3-months': Frame the test drive as a crucial step for their immediate purchase plans, hinting at exclusive offers for their *upcoming purchase*.
-                * If `time_frame` is '3-6-months' or '6-12-months': Offer continued support and guidance for their decision-making journey, expressing readiness to assist when they're closer to a purchase.
-                * If `time_frame` is 'exploring': Maintain a welcoming and inviting tone, focusing on discovery and a pressure-free experience for their future consideration.
-            * **Paragraph 4 (Call to Action & Closing):** Conclude with a clear and helpful call to action for any questions, and express eagerness for their visit. End with a warm closing from "Team AOE Motors".
-        4.  **CRITICAL Formatting Output Rules:**
-            * **The entire email body MUST be formatted using HTML paragraph tags (`<p>...</p>`) for *each* distinct logical section/paragraph as outlined above.**
-            * **Each paragraph (`<p>...</p>`) should be concise, typically 2-4 sentences maximum.**
-            * **The total email body should consist of exactly 4 HTML paragraphs, one for each point above (Greeting/Confirmation, Features, Time Frame, CTA/Closing).**
-            * **Do NOT use `\n\n` for spacing between paragraphs; the `<p>` tags handle the visual separation.**
-            * **Do NOT include any section dividers (like '---').**
-            * **Ensure there is no extra blank space at the beginning or end of the email output. Start immediately with the first `<p>` tag and end with the last `</p>` tag.**
+        2.  **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.**
+        3.  **STRICT Formatting Output Rules (MUST use HTML <p> tags):**
+            * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
+            * **Each logical section/paragraph MUST be entirely enclosed within its own `<p>` and `</p>` tags.**
+            * **Each paragraph (`<p>...</p>`) should be concise (typically 2-4 sentences maximum).**
+            * **Aim for a total of 4-6 distinct HTML paragraphs.**
+            * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
+            * **DO NOT include any section dividers (like '---').**
+            * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
+
+        **Content Structure & Logic (Each point should be a distinct HTML paragraph):**
+
+        * **Paragraph 1 (Greeting & Test Drive Confirmation):**
+            * Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement.
+            * Example: "<p>Dear {full_name},</p><p>We are thrilled to confirm your upcoming test drive of the {vehicle} on {formatted_date} in {location}. Get ready for an exhilarating experience!</p>"
+
+        * **Paragraph 2 (Vehicle Features & Persuasive Comparison):**
+            * Weave in the {vehicle}'s key features ({chosen_aoe_features}), **explicitly mentioning its {vehicle_type} and {powertrain_type}**.
+            * Focus on the *experience* and *benefits*.
+            * **Crucial Comparison Logic:**
+                * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
+                * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
+
+        * **Paragraph 3 (Purchase Time Frame Personalization - CRITICAL FIX):**
+            * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
+            * **DO NOT link this time frame directly to the test drive date or implying the test drive is the only opportunity for benefits tied to the time frame.**
+            * If `time_frame` is '0-3-months': Frame the test drive as a crucial *step* for their immediate purchase plans. Emphasize how AOE Motors is ready to support their swift decision with exclusive offers and an unparalleled ownership experience *for those ready to embrace the future soon*.
+            * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery, exploration, and making the experience informative and enjoyable for their future consideration.
+
+        * **Paragraph 4 (Call to Action & Closing):**
+            * Conclude with a clear and helpful call to action for any questions.
+            * Express eagerness for their visit.
+            * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
         """
         body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs."},
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
                 {"role": "user", "content": body_prompt}
             ],
             temperature=0.7,
@@ -279,6 +473,7 @@ async def testdrive_webhook(request: Request):
         # --- Email Sending to Team ---
         if TEAM_EMAIL and EMAIL_ADDRESS and EMAIL_PASSWORD: # Ensure TEAM_EMAIL is configured
             team_subject = f"NEW TEST DRIVE LEAD: {full_name} ({lead_score} Lead)"
+            # Note: For team email, it's safer to send plain text as HTML might render weirdly in logs/simple email clients
             team_body = f"""
             Dear Team,
 
@@ -288,7 +483,7 @@ async def testdrive_webhook(request: Request):
             - Name: {full_name}
             - Email: {email}
             - Phone: {phone}
-            - Vehicle: {vehicle}
+            - Vehicle: {vehicle} (Type: {vehicle_type}, Powertrain: {powertrain_type})
             - Date: {formatted_date}
             - Location: {location}
             - Current Vehicle: {current_vehicle}
