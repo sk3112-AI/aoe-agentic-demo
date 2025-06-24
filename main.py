@@ -31,33 +31,31 @@ cached_aoe_vehicles_data = {}
 LAST_DATA_REFRESH_TIME = 0
 REFRESH_INTERVAL_SECONDS = 4 * 3600 # Refresh every 4 hours (adjust as needed, e.g., 24*3600 for daily)
 
-# Dummy resources for each vehicle
+# DUMMY RESOURCE LINKS (for demonstration purposes)
+# In a real application, these would likely come from a CMS or a proper database
 DUMMY_VEHICLE_RESOURCES = {
     "AOE Apex": {
-        "youtube": "https://www.youtube.com/watch?v=AOE_Apex_TestDrive_Dummy", # Example dummy YouTube link
-        "pdf": "https://www.aoemotors.com/guides/AOE_Apex_Guide_Dummy.pdf" # Example dummy PDF link
+        "youtube_link": "https://www.youtube.com/watch?v=AOE_Apex_TestDrive_Dummy",
+        "pdf_link": "https://www.aoemotors.com/guides/AOE_Apex_Guide_Dummy.pdf"
     },
     "AOE Thunder": {
-        "youtube": "https://www.youtube.com/watch?v=AOE_Thunder_TestDrive_Dummy",
-        "pdf": "https://www.aoemotors.com/guides/AOE_Thunder_Guide_Dummy.pdf"
+        "youtube_link": "https://www.youtube.com/watch?v=AOE_Thunder_TestDrive_Dummy",
+        "pdf_link": "https://www.aoemotors.com/guides/AOE_Thunder_Guide_Dummy.pdf"
     },
     "AOE Volt": {
-        "youtube": "https://www.youtube.com/watch?v=AOE_Volt_TestDrive_Dummy",
-        "pdf": "https://www.aoemotors.com/guides/AOE_Volt_Guide_Dummy.pdf"
+        "youtube_link": "https://www.youtube.com/watch?v=AOE_Volt_TestDrive_Dummy",
+        "pdf_link": "https://www.aoemotors.com/guides/AOE_Volt_Guide_Dummy.pdf"
     }
 }
 
 def get_vehicle_resources(vehicle_name: str):
     """
-    Retrieves dummy YouTube video and PDF guide links for a given vehicle.
-    In a real scenario, this would interact with a database or external API.
+    Retrieves dummy resource links for a given vehicle.
     """
-    resources = DUMMY_VEHICLE_RESOURCES.get(vehicle_name, {
-        "youtube": "https://www.aoemotors.com/resources/general_youtube_dummy",
-        "pdf": "https://www.aoemotors.com/resources/general_guide_dummy.pdf"
+    return DUMMY_VEHICLE_RESOURCES.get(vehicle_name, {
+        "youtube_link": "https://www.aoemotors.com/general-video-dummy",
+        "pdf_link": "https://www.aoemotors.com/general-guide-dummy.pdf"
     })
-    logging.info(f"Retrieved dummy resources for {vehicle_name}: YouTube={resources['youtube']}, PDF={resources['pdf']}")
-    return resources
 
 # Function to initialize the database
 def init_db():
@@ -101,94 +99,39 @@ def fetch_aoe_vehicle_data_from_website():
         soup = BeautifulSoup(response.text, 'html.parser')
 
         vehicles_data = {}
-        # Assuming vehicle details are within a section, and each vehicle has a distinct card/div.
-        # This is a common pattern for vehicle listing pages.
-        # You MUST verify these selectors by inspecting the actual website HTML.
-
-        # --- IMPORTANT: These selectors are based on common patterns. VERIFY THEM! ---
-        # Look for a common container for all vehicles, then iterate through individual vehicle blocks.
-        # Example: if vehicles are in a div with id 'vehicles-section' and each vehicle is in a 'div' with class 'vehicle-card'
         
-        # This is a placeholder for a more specific container.
-        # For a single-page app using #vehicles, content might be dynamically loaded.
-        # If the content is in a specific div, you might do:
-        # vehicles_section = soup.find('div', id='vehicles-section')
-        # if not vehicles_section: vehicles_section = soup # Fallback if no specific section
-
-        # The most robust way without knowing the full structure is to look for common heading patterns for vehicles
-        # Let's try to find vehicle names and then assume sibling/parent elements contain details.
-        
-        # A common pattern: vehicle names are in <h3> or <h2> tags.
-        # Iterate through common headings to find vehicle names
-        
-        # The provided image_ee99a8.png and others show "AOE Apex", "AOE Thunder", "AOE Volt"
-        # Let's assume these names are within <h3> or <h2> tags near their descriptions.
-
-        # A more generic approach trying to find logical blocks:
-        # Look for a section that contains the vehicle information, often a <section> or <div>
-        # The website uses a single page layout with sections like #vehicles.
-        # Let's assume the vehicle details are structured within distinct blocks for each vehicle.
-        
-        # For lovable.app, inspecting the source, vehicle names like "AOE Apex" are usually within <h3> tags.
-        # The features might be in a <p> tag that follows.
-        
-        # Refined selectors based on common structure (YOU MUST VERIFY THESE!):
-        
-        # Assuming a structure like:
-        # <section id="vehicles">
-        #    <div class="vehicle-item">
-        #      <h3>AOE Apex</h3>
-        #      <p class="vehicle-description">Sleek design...</p>
-        #      <span class="vehicle-type">Sedan</span>
-        #      <span class="vehicle-powertrain">EV</span>
-        #    </div>
-        #    ...
-        # </section>
-
-        # Let's try finding the main content area first
         main_content = soup.find('main') or soup # Fallback to whole soup if no main tag
         
-        # Then, find all potential vehicle name headings
         vehicle_name_tags = main_content.find_all(['h2', 'h3', 'h4']) # Look for common heading tags
 
         for tag in vehicle_name_tags:
             name = tag.get_text(strip=True)
             # Basic filtering for known AOE vehicles
             if "AOE" in name and ("Apex" in name or "Thunder" in name or "Volt" in name):
-                # Now, try to find associated description, type, powertrain
-                # This is tricky as structure varies. We'll look at siblings or next elements.
                 features = "cutting-edge technology and futuristic design." # Default
                 vehicle_type = "Vehicle" # Default
                 powertrain = "Advanced" # Default
 
-                # Attempt to find descriptive paragraph or a specific 'features' class
-                # This often involves looking at the next sibling, or a sibling within a common parent
                 next_p = tag.find_next_sibling('p')
                 if next_p and len(next_p.get_text(strip=True)) > 20: # Heuristic: if it looks like a description
                     features = next_p.get_text(strip=True)
-                
-                # For type and powertrain, if they are not explicitly labelled,
-                # we might have to infer or look for specific text patterns in the features.
-                # Since the site structure is unknown without direct inspection,
-                # I will fall back to smart defaults for specific vehicles as a safer bet initially
-                # based on common knowledge (Apex/Volt as EV, Thunder as SUV).
                 
                 # Manual override/fallback based on common AOE assumptions for accuracy
                 if "Apex" in name:
                     vehicle_type = "Sedan"
                     powertrain = "EV"
                     if "Sleek design" not in features: # Augment if general features are picked up
-                             features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
+                         features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
                 elif "Thunder" in name:
                     vehicle_type = "SUV"
                     powertrain = "Gasoline" # Assuming it's not EV for now, per your clarification
                     if "bold design" not in features:
-                             features = "bold design, advanced all-wheel drive system, and robust capability."
+                         features = "bold design, advanced all-wheel drive system, and robust capability."
                 elif "Volt" in name:
                     vehicle_type = "Compact EV"
                     powertrain = "EV"
                     if "instant torque" not in features:
-                             features = "instant torque, zero-emission performance, and intelligent connectivity features."
+                         features = "instant torque, zero-emission performance, and intelligent connectivity features."
 
                 vehicles_data[name] = {
                     "type": vehicle_type,
@@ -323,11 +266,11 @@ async def testdrive_webhook(request: Request):
     powertrain_type = vehicle_info["powertrain"]
     chosen_aoe_features = vehicle_info["features"]
 
-    # --- Retrieve Dummy Resources ---
-    vehicle_resources = get_vehicle_resources(vehicle)
-    youtube_link = vehicle_resources["youtube"]
-    pdf_link = vehicle_resources["pdf"]
-    logging.debug(f"Assigned youtube_link: {youtube_link}, pdf_link: {pdf_link}")
+    # --- Get Dynamic Resource Links ---
+    resources = get_vehicle_resources(vehicle)
+    youtube_link = resources["youtube_link"]
+    pdf_link = resources["pdf_link"]
+
 
     # Determine tone based on time frame for email body and subject
     tone_instruction_body = "The tone should be enthusiastic and persuasive, highlighting immediate benefits."
@@ -405,11 +348,13 @@ async def testdrive_webhook(request: Request):
         - Test Drive Location: {location}
         - Customer's Current Vehicle: {current_vehicle} (if 'no vehicle', indicate they are exploring new options)
         - Purchase Time Frame: {time_frame} (refers to purchase intent/readiness, NOT test drive date)
-        - YouTube Resource Link: {youtube_link}
-        - PDF Resource Link: {pdf_link}
 
         **AOE Vehicle Features (for {vehicle}):**
         - {chosen_aoe_features}
+
+        **Resource Links (for {vehicle}):**
+        - YouTube Link: {youtube_link}
+        - PDF Guide Link: {pdf_link}
 
         **Instructions for Email Content:**
         1.  Start with a warm greeting to {full_name}.
@@ -436,16 +381,20 @@ async def testdrive_webhook(request: Request):
                 * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
                 * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
 
-        * **Paragraph 3 (Personalized Support for Your Journey):**
-            * This paragraph will address their purchase readiness *implicitly*, based on their '{time_frame}'. **DO NOT explicitly state the 'time_frame' (e.g., 'your 0-3 month timeframe').**
-            * **DO NOT link this support directly to the test drive date or imply the test drive is the only opportunity for benefits.**
-            * If `time_frame` is '0-3-months': Convey a sense of readiness and immediate opportunity. Emphasize how AOE Motors is prepared to assist with a swift decision, potentially mentioning exclusive benefits or streamlined processes for those looking to purchase soon. The tone should be action-oriented and supportive for a near-term purchase.
-            * If `time_frame` is '3-6-months' or '6-12-months': Convey ongoing support and resources for their considered decision. Offer to provide more information, answer questions as they arise, and highlight that AOE Motors is there to guide them as they move closer to making a choice. The tone should be helpful and informative, respecting their longer consideration period.
-            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure, and informative tone. Encourage continued discovery and exploration of AOE vehicles, inviting them to learn at their own pace without pressure. Focus on the joy of discovery and the unique aspects of AOE Motors.
+        * **Paragraph 3 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX):**
+            * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
+            * **CRITICAL: This paragraph MUST NOT explicitly mention '{time_frame}' or any specific timeframe (e.g., '0-3 months', '3-6 months', '6-12 months', 'exploring'). Convey the time frame *implicitly* through the tone and focus of the support offered, using phrasing that aligns with their readiness.**
+            * If `time_frame` is '0-3-months': Emphasize AOE Motors' readiness to support their swift decision, hinting at tailored support and exclusive opportunities for those ready to embrace the future soon.
+                * *Example Implicit Phrasing:* "We understand you're ready to make a swift decision, and our team is poised to offer tailored support and exclusive opportunities as you approach ownership."
+            * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued guidance and resources throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
+                * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an informed choice."
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery and making the experience informative and enjoyable for their future consideration, without implying urgency.
+                * *Example Implicit Phrasing:* "We invite you to take your time exploring all the innovative features of the {vehicle} and discover how AOE Motors can fit your lifestyle, without any pressure."
 
         * **Paragraph 4 (Valuable Resources):**
-            * Offer additional resources, specifically a YouTube video and a PDF guide, formatted as hyperlinks using the provided `youtube_link` and `pdf_link`.
-            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download {vehicle} Guide (PDF)</a>.</p>"
+            * Provide a sentence encouraging them to learn more.
+            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {Vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {Vehicle} Guide (PDF)").
+            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download AOE {vehicle} Guide (PDF)</a>.</p>"
 
         * **Paragraph 5 (Call to Action & Closing):**
             * Conclude with a clear and helpful call to action for any questions.
