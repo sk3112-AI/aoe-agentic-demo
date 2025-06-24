@@ -205,6 +205,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logging.error("OPENAI_API_KEY environment variable is not set.")
     # Consider raising an exception or handling this more gracefully in production
+    raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file.") # Added this for stronger error handling
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- DEBUG PRINTS (REMOVE FOR PRODUCTION) ---
@@ -393,7 +394,7 @@ async def testdrive_webhook(request: Request):
 
         * **Paragraph 4 (Valuable Resources):**
             * Provide a sentence encouraging them to learn more.
-            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {Vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {Vehicle} Guide (PDF)").
+            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {vehicle} Guide (PDF)").
             * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download AOE {vehicle} Guide (PDF)</a>.</p>"
 
         * **Paragraph 5 (Call to Action & Closing):**
