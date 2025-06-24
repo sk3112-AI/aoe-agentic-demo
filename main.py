@@ -31,6 +31,34 @@ cached_aoe_vehicles_data = {}
 LAST_DATA_REFRESH_TIME = 0
 REFRESH_INTERVAL_SECONDS = 4 * 3600 # Refresh every 4 hours (adjust as needed, e.g., 24*3600 for daily)
 
+# Dummy resources for each vehicle
+DUMMY_VEHICLE_RESOURCES = {
+    "AOE Apex": {
+        "youtube": "https://www.youtube.com/watch?v=AOE_Apex_TestDrive_Dummy", # Example dummy YouTube link
+        "pdf": "https://www.aoemotors.com/guides/AOE_Apex_Guide_Dummy.pdf" # Example dummy PDF link
+    },
+    "AOE Thunder": {
+        "youtube": "https://www.youtube.com/watch?v=AOE_Thunder_TestDrive_Dummy",
+        "pdf": "https://www.aoemotors.com/guides/AOE_Thunder_Guide_Dummy.pdf"
+    },
+    "AOE Volt": {
+        "youtube": "https://www.youtube.com/watch?v=AOE_Volt_TestDrive_Dummy",
+        "pdf": "https://www.aoemotors.com/guides/AOE_Volt_Guide_Dummy.pdf"
+    }
+}
+
+def get_vehicle_resources(vehicle_name: str):
+    """
+    Retrieves dummy YouTube video and PDF guide links for a given vehicle.
+    In a real scenario, this would interact with a database or external API.
+    """
+    resources = DUMMY_VEHICLE_RESOURCES.get(vehicle_name, {
+        "youtube": "https://www.aoemotors.com/resources/general_youtube_dummy",
+        "pdf": "https://www.aoemotors.com/resources/general_guide_dummy.pdf"
+    })
+    logging.info(f"Retrieved dummy resources for {vehicle_name}: YouTube={resources['youtube']}, PDF={resources['pdf']}")
+    return resources
+
 # Function to initialize the database
 def init_db():
     try:
@@ -108,13 +136,13 @@ def fetch_aoe_vehicle_data_from_website():
         
         # Assuming a structure like:
         # <section id="vehicles">
-        #   <div class="vehicle-item">
-        #     <h3>AOE Apex</h3>
-        #     <p class="vehicle-description">Sleek design...</p>
-        #     <span class="vehicle-type">Sedan</span>
-        #     <span class="vehicle-powertrain">EV</span>
-        #   </div>
-        #   ...
+        #    <div class="vehicle-item">
+        #      <h3>AOE Apex</h3>
+        #      <p class="vehicle-description">Sleek design...</p>
+        #      <span class="vehicle-type">Sedan</span>
+        #      <span class="vehicle-powertrain">EV</span>
+        #    </div>
+        #    ...
         # </section>
 
         # Let's try finding the main content area first
@@ -150,17 +178,17 @@ def fetch_aoe_vehicle_data_from_website():
                     vehicle_type = "Sedan"
                     powertrain = "EV"
                     if "Sleek design" not in features: # Augment if general features are picked up
-                         features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
+                             features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
                 elif "Thunder" in name:
                     vehicle_type = "SUV"
                     powertrain = "Gasoline" # Assuming it's not EV for now, per your clarification
                     if "bold design" not in features:
-                         features = "bold design, advanced all-wheel drive system, and robust capability."
+                             features = "bold design, advanced all-wheel drive system, and robust capability."
                 elif "Volt" in name:
                     vehicle_type = "Compact EV"
                     powertrain = "EV"
                     if "instant torque" not in features:
-                         features = "instant torque, zero-emission performance, and intelligent connectivity features."
+                             features = "instant torque, zero-emission performance, and intelligent connectivity features."
 
                 vehicles_data[name] = {
                     "type": vehicle_type,
@@ -295,6 +323,12 @@ async def testdrive_webhook(request: Request):
     powertrain_type = vehicle_info["powertrain"]
     chosen_aoe_features = vehicle_info["features"]
 
+    # --- Retrieve Dummy Resources ---
+    vehicle_resources = get_vehicle_resources(vehicle)
+    youtube_link = vehicle_resources["youtube"]
+    pdf_link = vehicle_resources["pdf"]
+    logging.debug(f"Assigned youtube_link: {youtube_link}, pdf_link: {pdf_link}")
+
     # Determine tone based on time frame for email body and subject
     tone_instruction_body = "The tone should be enthusiastic and persuasive, highlighting immediate benefits."
     tone_instruction_subject = "Use a highly persuasive and exciting tone."
@@ -371,6 +405,8 @@ async def testdrive_webhook(request: Request):
         - Test Drive Location: {location}
         - Customer's Current Vehicle: {current_vehicle} (if 'no vehicle', indicate they are exploring new options)
         - Purchase Time Frame: {time_frame} (refers to purchase intent/readiness, NOT test drive date)
+        - YouTube Resource Link: {youtube_link}
+        - PDF Resource Link: {pdf_link}
 
         **AOE Vehicle Features (for {vehicle}):**
         - {chosen_aoe_features}
@@ -382,7 +418,7 @@ async def testdrive_webhook(request: Request):
             * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
             * **Each logical section/paragraph MUST be entirely enclosed within its own `<p>` and `</p>` tags.**
             * **Each paragraph (`<p>...</p>`) should be concise (typically 2-4 sentences maximum).**
-            * **Aim for a total of 4-6 distinct HTML paragraphs.**
+            * **Aim for a total of 5-7 distinct HTML paragraphs.**
             * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
             * **DO NOT include any section dividers (like '---').**
             * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
@@ -400,14 +436,18 @@ async def testdrive_webhook(request: Request):
                 * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
                 * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
 
-        * **Paragraph 3 (Purchase Time Frame Personalization - CRITICAL FIX):**
-            * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
-            * **DO NOT link this time frame directly to the test drive date or implying the test drive is the only opportunity for benefits tied to the time frame.**
-            * If `time_frame` is '0-3-months': Frame the test drive as a crucial *step* for their immediate purchase plans. Emphasize how AOE Motors is ready to support their swift decision with exclusive offers and an unparalleled ownership experience *for those ready to embrace the future soon*.
-            * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued support and guidance throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
-            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery, exploration, and making the experience informative and enjoyable for their future consideration.
+        * **Paragraph 3 (Personalized Support for Your Journey):**
+            * This paragraph will address their purchase readiness *implicitly*, based on their '{time_frame}'. **DO NOT explicitly state the 'time_frame' (e.g., 'your 0-3 month timeframe').**
+            * **DO NOT link this support directly to the test drive date or imply the test drive is the only opportunity for benefits.**
+            * If `time_frame` is '0-3-months': Convey a sense of readiness and immediate opportunity. Emphasize how AOE Motors is prepared to assist with a swift decision, potentially mentioning exclusive benefits or streamlined processes for those looking to purchase soon. The tone should be action-oriented and supportive for a near-term purchase.
+            * If `time_frame` is '3-6-months' or '6-12-months': Convey ongoing support and resources for their considered decision. Offer to provide more information, answer questions as they arise, and highlight that AOE Motors is there to guide them as they move closer to making a choice. The tone should be helpful and informative, respecting their longer consideration period.
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure, and informative tone. Encourage continued discovery and exploration of AOE vehicles, inviting them to learn at their own pace without pressure. Focus on the joy of discovery and the unique aspects of AOE Motors.
 
-        * **Paragraph 4 (Call to Action & Closing):**
+        * **Paragraph 4 (Valuable Resources):**
+            * Offer additional resources, specifically a YouTube video and a PDF guide, formatted as hyperlinks using the provided `youtube_link` and `pdf_link`.
+            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download {vehicle} Guide (PDF)</a>.</p>"
+
+        * **Paragraph 5 (Call to Action & Closing):**
             * Conclude with a clear and helpful call to action for any questions.
             * Express eagerness for their visit.
             * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
