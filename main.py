@@ -119,12 +119,12 @@ def fetch_aoe_vehicle_data_from_website():
                 # Manual override/fallback based on common AOE assumptions for accuracy
                 if "Apex" in name:
                     vehicle_type = "Sedan"
-                    powertrain = "EV"
-                    if "Sleek design" not in features: # Augment if general features are picked up
-                         features = "sleek design, ultra-efficient EV range, and adaptive cruise control."
+                    powertrain = "Gasoline" # Corrected based on user feedback
+                    if "powerful performance" not in features: # Updated features for Gasoline
+                         features = "sleek design, powerful performance, and advanced safety features."
                 elif "Thunder" in name:
                     vehicle_type = "SUV"
-                    powertrain = "Gasoline" # Assuming it's not EV for now, per your clarification
+                    powertrain = "Gasoline"
                     if "bold design" not in features:
                          features = "bold design, advanced all-wheel drive system, and robust capability."
                 elif "Volt" in name:
@@ -144,7 +144,7 @@ def fetch_aoe_vehicle_data_from_website():
             # Fallback to a hardcoded dictionary if scraping fails or returns empty
             # This is CRITICAL to prevent a complete breakdown if scraping fails
             vehicles_data = {
-                "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+                "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
                 "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
                 "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
             }
@@ -157,7 +157,7 @@ def fetch_aoe_vehicle_data_from_website():
         logging.error(f"Error fetching vehicle data from website: {e}", exc_info=True)
         # Fallback to hardcoded defaults on network/HTTP error
         return {
-            "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
             "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
             "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
         }
@@ -165,7 +165,7 @@ def fetch_aoe_vehicle_data_from_website():
         logging.error(f"Error parsing vehicle data from website: {e}", exc_info=True)
         # Fallback to hardcoded defaults on parsing error
         return {
-            "AOE Apex": {"type": "Sedan", "powertrain": "EV", "features": "sleek design, ultra-efficient EV range, and adaptive cruise control."},
+            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
             "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
             "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
         }
@@ -318,7 +318,7 @@ async def testdrive_webhook(request: Request):
         - Example: "Your Apex Test Drive is Confirmed!" or "Experience the Volt: Your Test Drive Awaits!"
         - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
         """
-        subject_completion = client.chat.completions.create(
+        subject_completion = client.chat.com.pletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
