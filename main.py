@@ -318,7 +318,7 @@ async def testdrive_webhook(request: Request):
         - Example: "Your Apex Test Drive is Confirmed!" or "Experience the Volt: Your Test Drive Awaits!"
         - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
         """
-        subject_completion = client.chat.com.pletion.create(
+        subject_completion = client.chat.completions.create( # Corrected: completions.create
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
@@ -402,7 +402,7 @@ async def testdrive_webhook(request: Request):
             * Express eagerness for their visit.
             * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
         """
-        body_completion = client.chat.completions.create(
+        body_completion = client.chat.completions.create( # Corrected: completions.create
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
