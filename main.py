@@ -14,6 +14,7 @@ import logging
 import sys
 from openai import OpenAI
 import sqlite3
+import uuid # Import uuid for generating request IDs on the frontend if needed for examples
 
 # Load environment variables
 load_dotenv()
@@ -65,9 +66,10 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT UNIQUE,
                 full_name TEXT NOT NULL,
                 email TEXT NOT NULL,
-                phone TEXT,
+                -- phone TEXT, -- REMOVED PHONE COLUMN
                 vehicle TEXT,
                 booking_date TEXT,
                 location TEXT,
@@ -81,7 +83,7 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
-        logging.info(f"Database '{DATABASE_FILE}' initialized successfully.")
+        logging.info(f"Database '{DATABASE_FILE}' initialized successfully (phone column removed).")
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}", exc_info=True)
 
@@ -119,8 +121,8 @@ def fetch_aoe_vehicle_data_from_website():
                 # Manual override/fallback based on common AOE assumptions for accuracy
                 if "Apex" in name:
                     vehicle_type = "Sedan"
-                    powertrain = "Gasoline" # Corrected based on user feedback
-                    if "powerful performance" not in features: # Updated features for Gasoline
+                    powertrain = "Gasoline" 
+                    if "powerful performance" not in features: 
                          features = "sleek design, powerful performance, and advanced safety features."
                 elif "Thunder" in name:
                     vehicle_type = "SUV"
@@ -141,10 +143,8 @@ def fetch_aoe_vehicle_data_from_website():
         
         if not vehicles_data:
             logging.warning("No specific AOE vehicle data found by scraping. Using hardcoded defaults as fallback.")
-            # Fallback to a hardcoded dictionary if scraping fails or returns empty
-            # This is CRITICAL to prevent a complete breakdown if scraping fails
             vehicles_data = {
-                "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
+                "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."},
                 "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
                 "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
             }
@@ -155,17 +155,15 @@ def fetch_aoe_vehicle_data_from_website():
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Error fetching vehicle data from website: {e}", exc_info=True)
-        # Fallback to hardcoded defaults on network/HTTP error
         return {
-            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
+            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."},
             "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
             "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
         }
     except Exception as e:
         logging.error(f"Error parsing vehicle data from website: {e}", exc_info=True)
-        # Fallback to hardcoded defaults on parsing error
         return {
-            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."}, # Corrected fallback
+            "AOE Apex": {"type": "Sedan", "powertrain": "Gasoline", "features": "sleek design, powerful performance, and advanced safety features."},
             "AOE Thunder": {"type": "SUV", "powertrain": "Gasoline", "features": "bold design, advanced all-wheel drive system, and robust capability."},
             "AOE Volt": {"type": "Compact EV", "powertrain": "EV", "features": "instant torque, zero-emission performance, and intelligent connectivity features."}
         }
@@ -204,8 +202,7 @@ TEAM_EMAIL = os.getenv("TEAM_EMAIL") # This is used for sending internal notific
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logging.error("OPENAI_API_KEY environment variable is not set.")
-    # Consider raising an exception or handling this more gracefully in production
-    raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file.") # Added this for stronger error handling
+    raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file.")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- DEBUG PRINTS (REMOVE FOR PRODUCTION) ---
@@ -214,7 +211,6 @@ print(f"DEBUG: Loaded EMAIL_HOST: '{EMAIL_HOST}'")
 print(f"DEBUG: Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
 print(f"DEBUG: Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
 print(f"DEBUG: Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
-# print(f"DEBUG: Loaded EMAIL_PASSWORD: '{EMAIL_PASSWORD}'") # !!! DO NOT UNCOMMENT THIS IN PRODUCTION !!!
 print(f"DEBUG: Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
 # --- END DEBUG PRINTS ---
 
@@ -226,9 +222,31 @@ async def testdrive_webhook(request: Request):
 
     logging.debug(f"Received data: {data}")
 
+    # Extract request_id for idempotency
+    request_id = data.get("requestId")
+    if not request_id:
+        logging.warning("No 'requestId' provided in the payload. Idempotency cannot be guaranteed for this request.")
+
+    # --- Idempotency Check (before processing or sending emails) ---
+    if request_id:
+        try:
+            conn = sqlite3.connect(DATABASE_FILE)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM bookings WHERE request_id = ?", (request_id,))
+            existing_booking = cursor.fetchone()
+            conn.close()
+
+            if existing_booking:
+                logging.info(f"Duplicate request (requestId: {request_id}) received. Already processed. Ignoring to prevent continuous emails.")
+                return {"status": "success", "message": "Test drive request already processed."}
+        except Exception as db_e:
+            logging.error(f"Error during idempotency check for requestId {request_id}: {db_e}", exc_info=True)
+    # --- End Idempotency Check ---
+
+
     full_name = data.get("fullName", "")
     email = data.get("email", "")
-    phone = data.get("phone", "")
+    # phone = data.get("phone", "") # REMOVED PHONE DATA EXTRACTION
     vehicle = data.get("vehicle", "")
     date = data.get("date", "")
     location = data.get("location", "")
@@ -245,22 +263,20 @@ async def testdrive_webhook(request: Request):
     # --- Dynamic Vehicle Data Retrieval ---
     global cached_aoe_vehicles_data, LAST_DATA_REFRESH_TIME
 
-    # Check if data needs refresh before processing (simple caching mechanism)
     if time.time() - LAST_DATA_REFRESH_TIME > REFRESH_INTERVAL_SECONDS:
         logging.info("Refreshing cached vehicle data...")
         new_data = fetch_aoe_vehicle_data_from_website()
-        if new_data: # Only update if new data was successfully fetched
+        if new_data: 
             cached_aoe_vehicles_data = new_data
-            LAST_DATA_REFRESH_TIME = time.time()
+            LAST_DATA_REFRESH_TIME = time.time() 
             logging.info("Cached vehicle data refreshed.")
         else:
             logging.warning("Failed to refresh vehicle data. Continuing with old cached data.")
     
-    # Get specific vehicle info from cache; fallback to generic if not found
     vehicle_info = cached_aoe_vehicles_data.get(vehicle, {
-        "type": "vehicle", # Generic default
-        "powertrain": "advanced performance", # Generic default
-        "features": "cutting-edge technology and futuristic design." # Generic default
+        "type": "vehicle", 
+        "powertrain": "advanced performance", 
+        "features": "cutting-edge technology and futuristic design." 
     })
 
     vehicle_type = vehicle_info["type"]
@@ -318,7 +334,7 @@ async def testdrive_webhook(request: Request):
         - Example: "Your Apex Test Drive is Confirmed!" or "Experience the Volt: Your Test Drive Awaits!"
         - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
         """
-        subject_completion = client.chat.completions.create( # Corrected: completions.create
+        subject_completion = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
@@ -341,7 +357,6 @@ async def testdrive_webhook(request: Request):
         **Customer Details:**
         - Full Name: {full_name}
         - Email: {email}
-        - Phone: {phone}
         - Vehicle of Interest: {vehicle}
         - Vehicle Type: {vehicle_type}
         - Vehicle Powertrain: {powertrain_type}
@@ -402,7 +417,7 @@ async def testdrive_webhook(request: Request):
             * Express eagerness for their visit.
             * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
         """
-        body_completion = client.chat.completions.create( # Corrected: completions.create
+        body_completion = client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
@@ -472,7 +487,6 @@ async def testdrive_webhook(request: Request):
             **Customer Details:**
             - Name: {full_name}
             - Email: {email}
-            - Phone: {phone}
             - Vehicle: {vehicle} (Type: {vehicle_type}, Powertrain: {powertrain_type})
             - Date: {formatted_date}
             - Location: {location}
@@ -513,19 +527,22 @@ async def testdrive_webhook(request: Request):
             conn = sqlite3.connect(DATABASE_FILE)
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO bookings (full_name, email, phone, vehicle, booking_date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)
+                INSERT INTO bookings (request_id, full_name, email, vehicle, booking_date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (full_name, email, phone, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
+            ''', (request_id, full_name, email, vehicle, date, location, current_vehicle, time_frame, generated_subject, generated_body, lead_score))
             conn.commit()
             conn.close()
-            logging.info(f"Booking for {email} saved to database with lead score '{lead_score}'.")
+            logging.info(f"Booking for {email} (requestId: {request_id}) saved to database with lead score '{lead_score}'.")
+        except sqlite3.IntegrityError as ie:
+            logging.warning(f"Attempted to insert duplicate requestId {request_id}. This should have been caught earlier by idempotency check: {ie}")
+            return {"status": "success", "message": "Test drive data already processed (duplicate submission)."}
         except Exception as db_e:
-            logging.error(f"Failed to save booking to database for {email}: {db_e}", exc_info=True)
+            logging.error(f"Failed to save booking to database for {email} (requestId: {request_id}): {db_e}", exc_info=True)
+            return {"status": "error", "message": f"Failed to save booking: {str(db_e)}"}
 
 
     except Exception as e:
         logging.error(f"❌ Failed to process request or send email to {email}: {e}", exc_info=True)
-        # Return an error status if any part of the process fails
         return {"status": "error", "message": f"Failed to process test drive booking: {str(e)}"}
 
     return {"status": "success", "message": "Test drive data processed, emails sent, and lead scored."}
