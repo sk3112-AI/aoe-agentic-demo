@@ -229,16 +229,16 @@ if not OPENAI_API_KEY:
     raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file or Render environment.")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- DEBUG PRINTS (REMOVE FOR PRODUCTION) ---
-print(f"DEBUG: Application Starting Up - {datetime.now()}")
-print(f"DEBUG: Loaded EMAIL_HOST: '{EMAIL_HOST}'")
-print(f"DEBUG: Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
-print(f"DEBUG: Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
-print(f"DEBUG: Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
-print(f"DEBUG: Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
-print(f"DEBUG: Supabase URL (first 5 chars): '{SUPABASE_URL[:5] if SUPABASE_URL else 'None'}'")
-print(f"DEBUG: Supabase Key (first 5 chars): '{SUPABASE_KEY[:5] if SUPABASE_KEY else 'None'}'")
-# --- END DEBUG PRINTS ---
+# --- DEBUG LOGGING ---
+logging.debug(f"Application Starting Up - {datetime.now()}")
+logging.debug(f"Loaded EMAIL_HOST: '{EMAIL_HOST}'")
+logging.debug(f"Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
+logging.debug(f"Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
+logging.debug(f"Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
+logging.debug(f"Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
+logging.debug(f"Supabase URL (first 5 chars): '{SUPABASE_URL[:5] if SUPABASE_URL else 'None'}'")
+logging.debug(f"Supabase Key (first 5 chars): '{SUPABASE_KEY[:5] if SUPABASE_KEY else 'None'}'")
+# --- END DEBUG LOGGING ---
 
 
 @app.post("/webhook/testdrive")
