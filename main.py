@@ -38,207 +38,141 @@ SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supaba
 
 # Global variable to store cached vehicle data and last refresh time
 cached_aoe_vehicles_data = {}
-LAST_DATA_REFRESH_TIME = 0
-REFRESH_INTERVAL_SECONDS = 4 * 3600 # Refresh every 4 hours (adjust as needed, e.g., 24*3600 for daily)
+LAST_DATA_REFRESH_TIME = 0 # Unix timestamp
+REFRESH_INTERVAL_SECONDS = 3600 # Refresh every hour (3600 seconds)
 
-# DUMMY RESOURCE LINKS (for demonstration purposes)
-DUMMY_VEHICLE_RESOURCES = {
-    "AOE Apex": {
-        "youtube_link": "https://www.youtube.com/watch?v=AOE_Apex_TestDrive_Dummy",
-        "pdf_link": "https://www.aoemotors.com/guides/AOE_Apex_Guide_Dummy.pdf"
-    },
-    "AOE Thunder": {
-        "youtube_link": "https://www.youtube.com/watch?v=AOE_Thunder_TestDrive_Dummy",
-        "pdf_link": "https://www.aoemotors.com/guides/AOE_Thunder_Guide_Dummy.pdf"
-    },
-    "AOE Volt": {
-        "youtube_link": "https://www.youtube.com/watch?v=AOE_Volt_TestDrive_Dummy",
-        "pdf_link": "https://www.aoemotors.com/guides/AOE_Volt_Guide_Dummy.pdf"
-    }
-}
+# Email configuration
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL_HOST = os.getenv("EMAIL_HOST")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", 465)) # Default to 465 for SSL
 
-def get_vehicle_resources(vehicle_name: str):
-    """
-    Retrieves dummy resource links for a given vehicle.
-    """
-    return DUMMY_VEHICLE_RESOURCES.get(vehicle_name, {
-        "youtube_link": "https://www.aoemotors.com/general-video-dummy",
-        "pdf_link": "https://www.aoemotors.com/general-guide-dummy.pdf"
-    })
+# Team Email for notifications
+TEAM_EMAIL = os.getenv("TEAM_EMAIL")
+
+# OpenAI Client setup
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e:
+        logging.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+        openai_client = None # Ensure it's None if init fails
+else:
+    logging.warning("OPENAI_API_KEY environment variable is not set. AI functionalities will be limited.")
+
 
 def fetch_aoe_vehicle_data_from_website():
     """
-    Fetches vehicle data by scraping the AOE Motors website.
-    This implementation attempts to find structured features and specifications.
+    Scrapes vehicle data from the AOE Motors website.
+    Returns a dictionary of vehicle data, or None on failure.
     """
-    url = "https://aoe-motors.lovable.app/#vehicles"
-    logging.info(f"Attempting to fetch vehicle data from {url}...")
+    url = "https://www.aoemotors.com/vehicles"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status() # Raise an exception for HTTP errors
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        vehicles_data = {}
-        
-        # Adjust these selectors based on the actual HTML structure of your website
-        vehicle_cards = soup.find_all('div', class_=lambda x: x and ('bg-white' in x or 'shadow' in x) and 'p-6' in x)
-        
-        if not vehicle_cards:
-            logging.warning("No specific vehicle cards found by common styling. Trying more generic 'section' tags.")
-            vehicle_cards = soup.find_all('section')
+        vehicles = {}
+        vehicle_cards = soup.find_all('div', class_='vehicle-card') # Adjust class based on actual HTML
 
         for card in vehicle_cards:
-            name_tag = card.find(['h2', 'h3', 'h4'], string=lambda text: text and "AOE" in text)
-            if name_tag:
-                name = name_tag.get_text(strip=True)
-                vehicle_type = "Vehicle" # Default
-                powertrain = "Unknown" # Default
-                features_list = []
+            name_tag = card.find('h2', class_='vehicle-name')
+            type_tag = card.find('p', class_='vehicle-type')
+            powertrain_tag = card.find('p', class_='vehicle-powertrain')
+            features_tag = card.find('ul', class_='vehicle-features') # Assuming features are in a ul
 
-                # --- NEW: Extract Powertrain and Vehicle Type from Specifications Tab ---
-                spec_tab_button = card.find('button', string='Specifications')
-                spec_content_div = None
-                if spec_tab_button:
-                    # Find the content div associated with the Specifications tab
-                    # This often involves navigating siblings or parents
-                    potential_spec_div = spec_tab_button.find_parent().find_next_sibling('div')
-                    if potential_spec_div:
-                        spec_content_div = potential_spec_div
-                
-                if spec_content_div:
-                    spec_text = spec_content_div.get_text().lower()
-                    if "electric" in spec_text or "dual electric motors" in spec_text:
-                        powertrain = "Electric"
-                    elif "turbocharged" in spec_text or "v6" in spec_text or "i4" in spec_text or "engine" in spec_text:
-                        powertrain = "Gasoline"
-                    else:
-                        powertrain = "Hybrid" # A generic fallback for other types
-                
-                # Derive vehicle type based on visual clues (e.g., text near name or specific class)
-                # This is still heuristic and may need refinement if HTML changes.
-                type_tag = card.find('p', class_='text-gray-600') # Common class for type description
-                if type_tag and ("sedan" in type_tag.get_text().lower()):
-                    vehicle_type = "Luxury Sedan"
-                elif type_tag and ("suv" in type_tag.get_text().lower()):
-                    vehicle_type = "Performance SUV"
-                elif type_tag and ("electric" in type_tag.get_text().lower() and "compact" in type_tag.get_text().lower()):
-                    vehicle_type = "Electric Compact"
-                elif "Apex" in name: # Fallback if not found in specific tag
-                    vehicle_type = "Luxury Sedan"
-                elif "Thunder" in name:
-                    vehicle_type = "Performance SUV"
-                elif "Volt" in name:
-                    vehicle_type = "Electric Compact"
-
-
-                # --- Existing Feature Scraping Logic ---
-                features_tab_button = card.find('button', string='Features')
-                features_content_div = None
-                if features_tab_button:
-                    next_div = features_tab_button.find_parent().find_next_sibling('div')
-                    if next_div and next_div.find('ul'):
-                        features_content_div = next_div
-                    else:
-                        features_content_div = card # Fallback to card if specific feature div not found
-                else:
-                    features_content_div = card # Fallback if no features button
-
-                if features_content_div:
-                    for li in features_content_div.find_all('li'):
-                        feature_text = li.get_text(strip=True)
-                        if feature_text and len(feature_text) > 5: # Basic filter for meaningful features
-                            features_list.append(feature_text)
-                
-                features_str = ", ".join(features_list) if features_list else f"cutting-edge technology and a luxurious experience, including {vehicle_type} specific enhancements."
-
-                # Refined Fallback to general descriptions if scraping yields little or nothing
-                if not features_list or len(features_list) < 3:
-                    if "Apex" in name:
-                        features_str = "Massage Seats with Memory Foam, Panoramic Glass Roof with Electrochromic Dimming, Level 3 Autonomous Driving, Wireless Phone Charging & Connectivity, Advanced Air Purification System, Heated & Ventilated Seats."
-                    elif "Thunder" in name:
-                        features_str = "Advanced Terrain Management System, Adaptive All Suspension, 360 Surround View Camera, Towing Capacity: 7,500 lbs, Sport Track Mode, Premium Brembo Braking System, Wade Sensing Technology, Dual-Zone Climate Control."
-                    elif "Volt" in name:
-                        features_str = "Ultra-Fast 350kW DC Charging, Advanced Autopilot with AI, Solar Panel Integration, Vehicle-to-Grid (V2G) Technology, Over-the-Air Software Updates, Regenerative Braking System, Smart Climate Pre-conditioning, Wireless Charging Pad."
-
-                vehicles_data[name] = {
-                    "type": vehicle_type,
-                    "powertrain": powertrain,
-                    "features": features_str
-                }
-        
-        if not vehicles_data:
-            logging.warning("No specific AOE vehicle data found by scraping. Using hardcoded defaults as fallback.")
-            vehicles_data = {
-                "AOE Apex": {"type": "Luxury Sedan", "powertrain": "Gasoline", "features": "Massage Seats with Memory Foam, Panoramic Glass Roof with Electrochromic Dimming, Level 3 Autonomous Driving, Wireless Phone Charging & Connectivity, Advanced Air Purification System, Heated & Ventilated Seats."},
-                "AOE Thunder": {"type": "Performance SUV", "powertrain": "Gasoline", "features": "Advanced Terrain Management System, Adaptive All Suspension, 360 Surround View Camera, Towing Capacity: 7,500 lbs, Sport Track Mode, Premium Brembo Braking System, Wade Sensing Technology, Dual-Zone Climate Control."},
-                "AOE Volt": {"type": "Electric Compact", "powertrain": "Electric", "features": "Ultra-Fast 350kW DC Charging, Advanced Autopilot with AI, Solar Panel Integration, Vehicle-to-Grid (V2G) Technology, Over-the-Air Software Updates, Regenerative Braking System, Smart Climate Pre-conditioning, Wireless Charging Pad."}
+            name = name_tag.text.strip() if name_tag else "Unknown Vehicle"
+            vehicle_type = type_tag.text.replace("Type:", "").strip() if type_tag else "Unknown Type"
+            powertrain = powertrain_tag.text.replace("Powertrain:", "").strip() if powertrain_tag else "Unknown Powertrain"
+            
+            features = []
+            if features_tag:
+                for li in features_tag.find_all('li'):
+                    features.append(li.text.strip())
+            
+            vehicles[name] = {
+                "type": vehicle_type,
+                "powertrain": powertrain,
+                "features": ", ".join(features) if features else "No specific features listed."
             }
-
-        logging.info("Successfully fetched and parsed vehicle data.")
-        return vehicles_data
+        logging.info(f"Successfully scraped {len(vehicles)} vehicles from {url}.")
+        return vehicles
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching vehicle data from website: {e}", exc_info=True)
-        # Fallback to hardcoded values for robustness
-        return {
-            "AOE Apex": {"type": "Luxury Sedan", "powertrain": "Gasoline", "features": "Massage Seats with Memory Foam, Panoramic Glass Roof with Electrochromic Dimming, Level 3 Autonomous Driving, Wireless Phone Charging & Connectivity, Advanced Air Purification System, Heated & Ventilated Seats."},
-            "AOE Thunder": {"type": "Performance SUV", "powertrain": "Gasoline", "features": "Advanced Terrain Management System, Adaptive All Suspension, 360 Surround View Camera, Towing Capacity: 7,500 lbs, Sport Track Mode, Premium Brembo Braking System, Wade Sensing Technology, Dual-Zone Climate Control."},
-            "AOE Volt": {"type": "Electric Compact", "powertrain": "Electric", "features": "Ultra-Fast 350kW DC Charging, Advanced Autopilot with AI, Solar Panel Integration, Vehicle-to-Grid (V2G) Technology, Over-the-Air Software Updates, Regenerative Braking System, Smart Climate Pre-conditioning, Wireless Charging Pad."}
-        }
+        logging.error(f"Error fetching vehicle data from {url}: {e}", exc_info=True)
+        return None
     except Exception as e:
-        logging.error(f"Error parsing vehicle data from website: {e}", exc_info=True)
-        # Fallback to hardcoded values for robustness
-        return {
-            "AOE Apex": {"type": "Luxury Sedan", "powertrain": "Gasoline", "features": "Massage Seats with Memory Foam, Panoramic Glass Roof with Electrochromic Dimming, Level 3 Autonomous Driving, Wireless Phone Charging & Connectivity, Advanced Air Purification System, Heated & Ventilated Seats."},
-            "AOE Thunder": {"type": "Performance SUV", "powertrain": "Gasoline", "features": "Advanced Terrain Management System, Adaptive All Suspension, 360 Surround View Camera, Towing Capacity: 7,500 lbs, Sport Track Mode, Premium Brembo Braking System, Wade Sensing Technology, Dual-Zone Climate Control."},
-            "AOE Volt": {"type": "Electric Compact", "powertrain": "Electric", "features": "Ultra-Fast 350kW DC Charging, Advanced Autopilot with AI, Solar Panel Integration, Vehicle-to-Grid (V2G) Technology, Over-the-Air Software Updates, Regenerative Braking System, Smart Climate Pre-conditioning, Wireless Charging Pad."}
-        }
+        logging.error(f"An unexpected error occurred during scraping: {e}", exc_info=True)
+        return None
 
-# Run initial data fetch on app startup
-@app.on_event("startup")
-async def startup_event():
+def scrape_aoe_vehicles_data():
+    """
+    Refreshes the global cached_aoe_vehicles_data if the refresh interval has passed.
+    """
     global cached_aoe_vehicles_data, LAST_DATA_REFRESH_TIME
-    logging.info("Performing initial vehicle data fetch on startup...")
-    cached_aoe_vehicles_data = fetch_aoe_vehicle_data_from_website()
-    if cached_aoe_vehicles_data:
-        LAST_DATA_REFRESH_TIME = time.time()
-        logging.info(f"Initial vehicle data fetched. {len(cached_aoe_vehicles_data)} vehicles loaded.")
+    if time.time() - LAST_DATA_REFRESH_TIME > REFRESH_INTERVAL_SECONDS:
+        logging.info("Attempting to refresh cached vehicle data...")
+        new_data = fetch_aoe_vehicle_data_from_website()
+        if new_data:
+            cached_aoe_vehicles_data = new_data
+            LAST_DATA_REFRESH_TIME = time.time()
+            logging.info("Cached vehicle data successfully refreshed.")
+        else:
+            logging.warning("Failed to refresh vehicle data. Keeping existing cached data.")
     else:
-        logging.error("Failed to fetch initial vehicle data from website. Relying on hardcoded fallbacks.")
+        logging.info("Skipping vehicle data refresh. Interval not yet passed.")
+
+# Initial data load when the application starts
+scrape_aoe_vehicles_data()
 
 
-# Enable CORS
+def get_vehicle_resources(vehicle_name: str):
+    """
+    Returns mock resource links (YouTube, PDF) for a given vehicle.
+    In a real application, this would fetch from a database or API.
+    """
+    resources = {
+        "Apex": {
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_apex_overview",
+            "pdf_link": "https://www.aoemotors.com/docs/apex_guide.pdf"
+        },
+        "Volt": {
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_volt_review",
+            "pdf_link": "https://www.aoemotors.com/docs/volt_specs.pdf"
+        },
+        "Aero": {
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_aero_features",
+            "pdf_link": "https://www.aoemotors.com/docs/aero_brochure.pdf"
+        }
+    }
+    return resources.get(vehicle_name, {
+        "youtube_link": "https://www.youtube.com/watch?v=aoe_generic_overview",
+        "pdf_link": "https://www.aoemotors.com/docs/generic_guide.pdf"
+    })
+
+# CORS configuration to allow all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allows all origins. For production, you should restrict this.
+    allow_origins=["*"], # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"], # Allows all methods
+    allow_methods=["*"], # Allows all methods (GET, POST, PUT, DELETE, etc.)
     allow_headers=["*"], # Allows all headers
 )
 
-# Email config
-EMAIL_HOST = os.getenv("EMAIL_HOST")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", 0))
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-TEAM_EMAIL = os.getenv("TEAM_EMAIL") # This is used for sending internal notifications
-
-# OpenAI config
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logging.error("OPENAI_API_KEY environment variable is not set.")
-    raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file or Render environment.")
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# --- DEBUG LOGGING ---
-logging.debug(f"Application Starting Up - {datetime.now()}")
-logging.debug(f"Loaded EMAIL_HOST: '{EMAIL_HOST}'")
-logging.debug(f"Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
-logging.debug(f"Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
-logging.debug(f"Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
-logging.debug(f"Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
-logging.debug(f"Supabase URL (first 5 chars): '{SUPABASE_URL[:5] if SUPABASE_URL else 'None'}'")
-logging.debug(f"Supabase Key (first 5 chars): '{SUPABASE_KEY[:5] if SUPABASE_KEY else 'None'}'")
+# --- DEBUG LOGGING ENDPOINT ---
+@app.get("/debug-logs")
+async def get_debug_logs():
+    """Endpoint to retrieve recent debug logs."""
+    # This is a placeholder. In a real app, you'd fetch from a log file or streaming service.
+    # For now, it just shows the recent messages that went to stdout/stderr.
+    logging.info("Debug logs requested.")
+    # This won't capture all past logs, only what's still in the buffer
+    return {"message": "Debug logging is active. Check server console for full logs."}
 # --- END DEBUG LOGGING ---
 
 
@@ -284,10 +218,10 @@ async def update_booking(request_body: UpdateBookingRequest):
             logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
             return {"status": "success", "message": "Booking updated successfully."}
         else:
-            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
+            logging.error(f"❌ Failed to update booking {request_id}. Response: {response}")
             raise HTTPException(status_code=500, detail="Failed to update booking.")
     except Exception as e:
-        logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
+        logging.error(f"🚨 Error updating booking {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
 # NEW ENDPOINT 2: Draft and Send Follow-up Email
