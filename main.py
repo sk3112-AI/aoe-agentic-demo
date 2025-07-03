@@ -4,6 +4,7 @@ import time
 import json
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel # NEW: Import BaseModel for request body validation
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -209,10 +210,10 @@ async def startup_event():
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Allows all origins. For production, you should restrict this.
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Allows all methods
+    allow_headers=["*"], # Allows all headers
 )
 
 # Email config
@@ -227,18 +228,156 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logging.error("OPENAI_API_KEY environment variable is not set.")
     raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY in your .env file or Render environment.")
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- DEBUG PRINTS (REMOVE FOR PRODUCTION) ---
-print(f"DEBUG: Application Starting Up - {datetime.now()}")
-print(f"DEBUG: Loaded EMAIL_HOST: '{EMAIL_HOST}'")
-print(f"DEBUG: Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
-print(f"DEBUG: Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
-print(f"DEBUG: Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
-print(f"DEBUG: Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
-print(f"DEBUG: Supabase URL (first 5 chars): '{SUPABASE_URL[:5] if SUPABASE_URL else 'None'}'")
-print(f"DEBUG: Supabase Key (first 5 chars): '{SUPABASE_KEY[:5] if SUPABASE_KEY else 'None'}'")
-# --- END DEBUG PRINTS ---
+# --- DEBUG LOGGING ---
+logging.debug(f"Application Starting Up - {datetime.now()}")
+logging.debug(f"Loaded EMAIL_HOST: '{EMAIL_HOST}'")
+logging.debug(f"Loaded EMAIL_PORT: '{EMAIL_PORT}' (Type: {type(EMAIL_PORT)})")
+logging.debug(f"Loaded EMAIL_ADDRESS: '{EMAIL_ADDRESS}'")
+logging.debug(f"Loaded TEAM_EMAIL: '{TEAM_EMAIL}'")
+logging.debug(f"Loaded OPENAI_API_KEY (first 5 chars): '{OPENAI_API_KEY[:5] if OPENAI_API_KEY else 'None'}'")
+logging.debug(f"Supabase URL (first 5 chars): '{SUPABASE_URL[:5] if SUPABASE_URL else 'None'}'")
+logging.debug(f"Supabase Key (first 5 chars): '{SUPABASE_KEY[:5] if SUPABASE_KEY else 'None'}'")
+# --- END DEBUG LOGGING ---
+
+
+@app.get("/")
+async def read_root():
+    """Root endpoint for the API."""
+    return {"message": "Welcome to AOE Motors Test Drive API. Send a POST request to /webhook/testdrive to book a test drive."}
+
+# EXISTING ENDPOINT FOR VEHICLE DATA
+@app.get("/vehicles-data")
+async def get_vehicles_data():
+    """
+    Endpoint to retrieve cached (and periodically refreshed) AOE Motors vehicle data.
+    """
+    try:
+        # Ensure the scraping function is called to refresh data if needed
+        # This function updates the global cached_aoe_vehicles_data
+        scrape_aoe_vehicles_data()
+        return cached_aoe_vehicles_data
+    except Exception as e:
+        logging.error(f"❌ Error retrieving vehicle data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve vehicle data.")
+
+# NEW ENDPOINT 1: Update Booking Status and Sales Notes
+class UpdateBookingRequest(BaseModel):
+    request_id: str
+    action_status: str
+    sales_notes: str = None # Optional, can be empty
+
+@app.post("/update-booking")
+async def update_booking(request_body: UpdateBookingRequest):
+    """
+    Endpoint to update a booking's action_status and sales_notes in Supabase.
+    """
+    try:
+        update_data = {
+            "action_status": request_body.action_status,
+            "sales_notes": request_body.sales_notes
+        }
+        response = supabase.from_(SUPABASE_TABLE_NAME).update(update_data).eq('request_id', request_body.request_id).execute()
+
+        if response.data:
+            logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
+            return {"status": "success", "message": "Booking updated successfully."}
+        else:
+            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
+            raise HTTPException(status_code=500, detail="Failed to update booking.")
+    except Exception as e:
+        logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+# NEW ENDPOINT 2: Draft and Send Follow-up Email
+class DraftAndSendEmailRequest(BaseModel):
+    customer_name: str
+    customer_email: str
+    vehicle_name: str
+    sales_notes: str
+    vehicle_details: dict # Pass the relevant vehicle details from frontend
+
+@app.post("/draft-and-send-followup-email")
+async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
+    """
+    Endpoint to draft an AI email based on sales notes and send it to the customer.
+    """
+    logging.info(f"Received request to draft and send email for {request_body.customer_name}.")
+
+    try:
+        features_str = request_body.vehicle_details.get("features", "cutting-edge technology and a luxurious experience.")
+        vehicle_type = request_body.vehicle_details.get("type", "vehicle")
+        powertrain = request_body.vehicle_details.get("powertrain", "advanced performance")
+
+        prompt = f"""
+        Draft a polite, helpful, and persuasive follow-up email to a customer named {request_body.customer_name}.
+
+        **Customer Information:**
+        - Name: {request_body.customer_name}
+        - Email: {request_body.customer_email}
+        - Vehicle of Interest: {request_body.vehicle_name} ({vehicle_type}, {powertrain} powertrain)
+        - Customer Issues/Comments (from sales notes): "{request_body.sales_notes}"
+
+        **AOE {request_body.vehicle_name} Key Features:**
+        - {features_str}
+
+        **Email Instructions:**
+        - Start with a polite greeting.
+        - Acknowledge their test drive or recent interaction.
+        - **Crucially, directly address the customer's stated issues from the sales notes.** For each issue mentioned, explain how specific features of the AOE {request_body.vehicle_name} (from the provided list) directly resolve or alleviate that concern.
+            - If "high EV cost" is mentioned: Focus on long-term savings, reduced fuel costs, potential tax credits, Vehicle-to-Grid (V2G) if applicable (Volt).
+            - If "charging anxiety" is mentioned: Highlight ultra-fast charging, solar integration (Volt), extensive charging network, range.
+            - If other issues are mentioned: Adapt relevant features.
+        - If no specific issues are mentioned, write a general follow-up highlighting key benefits.
+        - End with a call to action to schedule another call or visit to discuss further.
+        - Maintain a professional, empathetic, and persuasive tone.
+        - **Output only the email content (Subject and Body), in plain text format.** Do NOT use HTML.
+        - **Separate Subject and Body with "Subject: " at the beginning of the subject line.**
+        """
+
+        # Generate email content using OpenAI
+        logging.info(f"Generating follow-up email for {request_body.customer_email} with OpenAI...")
+        completion = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", # You can use "gpt-4o" for better quality if available
+            messages=[
+                {"role": "system", "content": "You are a helpful and persuasive sales assistant for AOE Motors."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=600
+        )
+        draft = completion.choices[0].message.content.strip()
+
+        subject_line = "Follow-up from AOE Motors"
+        body_content = draft
+        if "Subject:" in draft:
+            parts = draft.split("Subject:", 1)
+            subject_line = parts[1].split("\n", 1)[0].strip()
+            body_content = parts[1].split("\n", 1)[1].strip()
+        
+        logging.info(f"Generated Follow-up Subject: {subject_line}")
+
+        # Send the email
+        if EMAIL_ADDRESS and EMAIL_PASSWORD and EMAIL_HOST and EMAIL_PORT:
+            msg = MIMEMultipart()
+            msg["From"] = EMAIL_ADDRESS
+            msg["To"] = request_body.customer_email
+            msg["Subject"] = subject_line
+            msg.attach(MIMEText(body_content, "plain"))
+
+            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(msg)
+            logging.info(f"✅ Follow-up email sent to {request_body.customer_email}")
+            return {"status": "success", "message": "Email drafted and sent successfully!", "subject": subject_line, "body": body_content}
+        else:
+            logging.warning("Email sending credentials not fully configured. Email not sent.")
+            return {"status": "warning", "message": "Email drafted, but not sent (credentials missing).", "subject": subject_line, "body": body_content}
+
+    except Exception as e:
+        logging.error(f"🚨 Error drafting or sending email for {request_body.customer_name}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during email process: {e}")
 
 
 @app.post("/webhook/testdrive")
@@ -332,7 +471,7 @@ async def testdrive_webhook(request: Request):
     lead_score = "Unknown" # Default value
 
     try:
-        if not OPENAI_API_KEY or not client:
+        if not OPENAI_API_KEY or not openai_client:
             raise ValueError("OpenAI client not initialized. Check API key.")
 
         # --- 1. Dynamic Subject Line Generation ---
@@ -356,7 +495,7 @@ async def testdrive_webhook(request: Request):
         - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
         - **Do NOT confuse 'Vehicle Type' with 'Powertrain Type'.** For {vehicle}, the vehicle type is {vehicle_type} and the powertrain is {powertrain_type}.
         """
-        subject_completion = client.chat.completions.create(
+        subject_completion = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
@@ -439,7 +578,7 @@ async def testdrive_webhook(request: Request):
             * Express eagerness for their visit.
             * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
         """
-        body_completion = client.chat.completions.create(
+        body_completion = openai_client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
@@ -578,8 +717,3 @@ async def testdrive_webhook(request: Request):
     except Exception as e:
         logging.error(f"🚨 An unexpected error occurred during webhook processing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
-@app.get("/")
-async def read_root():
-    """Root endpoint for the API."""
-    return {"message": "Welcome to AOE Motors Test Drive API. Send a POST request to /webhook/testdrive to book a test drive."}
