@@ -1,13 +1,20 @@
 [project]
-name = "fastapi"
+name = "aoe-agentic-demo-clean"
 version = "0.1.0"
 description = ""
 authors = [
     {name = "Karthikeyan S",email = "sm.karthikeyan31@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<4.0"
 dependencies = [
+    "requests (>=2.32.4,<3.0.0)",
+    "beautifulsoup4 (>=4.13.4,<5.0.0)",
+    "fastapi (>=0.115.14,<0.116.0)",
+    "uvicorn (>=0.35.0,<0.36.0)",
+    "python-dotenv (>=1.1.1,<2.0.0)",
+    "openai (>=1.93.0,<2.0.0)",
+    "supabase (>=2.16.0,<3.0.0)"
 ]
 
 
