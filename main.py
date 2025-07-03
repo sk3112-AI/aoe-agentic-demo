@@ -485,9 +485,8 @@ async def testdrive_webhook(request: Request):
 
         # --- Email Sending to Team ---
         if TEAM_EMAIL and EMAIL_ADDRESS and EMAIL_PASSWORD: # Ensure TEAM_EMAIL is configured
-            team_subject = f"NEW TEST DRIVE LEAD: {full_name} ({lead_score} Lead)"
-            # Note: For team email, it's safer to send plain text as HTML might render weirdly in logs/simple email clients
-            team_body = f"""
+            # Changed to .format() for robustness against nested f-string issues
+            team_body = """
             Dear Team,
 
             A new test drive booking has been received.
@@ -505,3 +504,81 @@ async def testdrive_webhook(request: Request):
             ---
             **Email Content Sent to Customer:**
             Subject: {generated_subject}
+            To: {email}
+            From: {EMAIL_ADDRESS}
+
+            {generated_body}
+            ---
+
+            Please follow up accordingly.
+
+            Best regards,
+            AOE Motors System
+            """.format(
+                full_name=full_name,
+                email=email,
+                vehicle=vehicle,
+                vehicle_type=vehicle_type,
+                powertrain_type=powertrain_type,
+                formatted_date=formatted_date,
+                location=location,
+                current_vehicle=current_vehicle,
+                time_frame=time_frame,
+                lead_score=lead_score,
+                generated_subject=generated_subject,
+                EMAIL_ADDRESS=EMAIL_ADDRESS,
+                generated_body=generated_body
+            )
+            msg_team = MIMEMultipart()
+            msg_team["From"] = EMAIL_ADDRESS
+            msg_team["To"] = TEAM_EMAIL
+            msg_team["Subject"] = team_subject
+            msg_team.attach(MIMEText(team_body, "plain")) # Plain text for internal clarity
+
+            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+                logging.debug(f"Attempting to connect to SMTP server for team email: {EMAIL_HOST}:{EMAIL_PORT}")
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(msg_team)
+                logging.info(f"✅ Team notification email sent to {TEAM_EMAIL} (Subject: '{team_subject}').")
+        else:
+            logging.warning("TEAM_EMAIL not configured or email sending credentials missing. Skipping team notification.")
+
+        # --- Save to Supabase ---
+        try:
+            booking_data = {
+                "request_id": request_id,
+                "full_name": full_name,
+                "email": email,
+                "vehicle": vehicle,
+                "booking_date": date, # Store as YYYY-MM-DD
+                "location": location,
+                "current_vehicle": current_vehicle,
+                "time_frame": time_frame,
+                "generated_subject": generated_subject,
+                "generated_body": generated_body,
+                "lead_score": lead_score,
+                "booking_timestamp": datetime.now().isoformat(), # ISO format for Supabase datetime
+                "action_status": 'New Lead', # Default
+                "sales_notes": '' # Default empty
+            }
+            response = supabase.from_(SUPABASE_TABLE_NAME).insert(booking_data).execute()
+            if response.data:
+                logging.info(f"✅ Booking data successfully saved to Supabase (request_id: {request_id}).")
+            else:
+                logging.error(f"❌ Failed to save booking data to Supabase for request_id {request_id}. Response: {response}")
+                # You might choose to raise an HTTPException here if DB save is critical
+        except Exception as e:
+            logging.error(f"❌ Error saving booking data to Supabase for request_id {request_id}: {e}", exc_info=True)
+            # Decide if this should be a critical failure for the webhook or just logged
+            # For now, it will return success if emails are sent, but log DB failure
+
+        return {"status": "success", "message": "Test drive request processed successfully and emails sent."}
+
+    except Exception as e:
+        logging.error(f"🚨 An unexpected error occurred during webhook processing: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+@app.get("/")
+async def read_root():
+    """Root endpoint for the API."""
+    return {"message": "Welcome to AOE Motors Test Drive API. Send a POST request to /webhook/testdrive to book a test drive."}
