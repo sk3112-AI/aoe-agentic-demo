@@ -183,7 +183,7 @@ async def update_booking(request_body: UpdateBookingRequest):
             logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
             return {"status": "success", "message": "Booking updated successfully."}
         else:
-            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
+            logging.error(f"❌ Failed to update booking {request_id}. Response: {response}")
             raise HTTPException(status_code=500, detail="Failed to update booking.")
     except Exception as e:
         logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
@@ -224,15 +224,54 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
         **Email Instructions:**
         - Start with a polite greeting.
         - Acknowledge their test drive or recent interaction.
-        - **Crucially, directly address the customer's stated issues from the sales notes.** For each issue mentioned, explain how specific features of the AOE {request_body.vehicle_name} (from the provided list) directly resolve or alleviate that concern.
-            - If "high EV cost" is mentioned: Focus on long-term savings, reduced fuel costs, potential tax credits, Vehicle-to-Grid (V2G) if applicable (Volt).
-            - If "charging anxiety" is mentioned: Highlight ultra-fast charging, solar integration (Volt), extensive charging network, range.
-            - If other issues are mentioned: Adapt relevant features.
-        - If no specific issues are mentioned, write a general follow-up highlighting key benefits.
-        - End with a call to action to schedule another call or visit to discuss further.
-        - Maintain a professional, empathetic, and persuasive tone.
-        - **Output only the email content (Subject and Body), in plain text format.** Do NOT use HTML.
-        - **Separate Subject and Body with "Subject: " at the beginning of the subject line.**
+        - **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.**
+        - **STRICT Formatting Output Rules (MUST use HTML <p> tags):**
+            * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
+            * **Each logical section/paragraph MUST be entirely enclosed within its own `<p>` and `</p>` tags.**
+            * **Each paragraph (`<p>...</p>`) should be concise (typically 2-4 sentences maximum).**
+            * **Aim for a total of 5-7 distinct HTML paragraphs.**
+            * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
+            * **DO NOT include any section dividers (like '---').**
+            * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
+
+        **Content Structure & Logic (Each point should be a distinct HTML paragraph):**
+
+        * **Paragraph 1 (Greeting & Test Drive Confirmation):**
+            * Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement.
+            * Example: "<p>Dear {full_name},</p><p>We are thrilled to confirm your upcoming test drive of the {vehicle} on {formatted_date} in {location}. Get ready for an exhilarating experience!</p>"
+
+        * **Paragraph 2 (Vehicle Features & Persuasive Comparison - Simplified Language):**
+            * From the provided {chosen_aoe_features}, **select and highlight only 2-3 MOST EXCITING and UNIQUE features**.
+            * **Crucially, translate any technical jargon into simple, benefit-oriented language.** Focus on what the feature *does for the driver* and the *experience* it provides, not just what it *is*.
+            * Integrate these naturally into the paragraph, explicitly mentioning its {vehicle_type} and {powertrain_type}. Do NOT simply list features or include more than 3.
+            * **Crucial Comparison Logic:**
+                * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
+                * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
+
+        * **Paragraph 3 (Overall Experience & Benefits - NOT more features):**
+            * This paragraph should focus on the *overall experience* of owning or driving the {vehicle}, or the general benefits it offers, *without introducing additional new features*.
+            * If `current_vehicle` is 'exploring', this paragraph can reinforce the idea of discovery and the unique possibilities the {vehicle} offers.
+            * Example: "<p>Beyond specific features, the AOE {vehicle} is designed to offer an unmatched driving experience, combining exceptional comfort with thrilling performance, making every journey a pleasure.</p>" (This is an example, LLM should adapt.)
+
+        * **Paragraph 4 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX):**
+            * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
+            * **CRITICAL: This paragraph MUST NOT explicitly mention '{time_frame}' or any specific timeframe (e.g., '0-3 months', '3-6 months', '6-12 months', 'exploring'). Convey the time frame *implicitly* through the tone and focus of the support offered, using phrasing that aligns with their readiness.**
+            * If `time_frame` is '0-3-months': Emphasize AOE Motors' readiness to support their swift decision, hinting at tailored support and exclusive opportunities for those ready to embrace the future soon.
+                * *Example Implicit Phrasing:* "We understand you're ready to make a swift decision, and our team is poised to offer tailored support and exclusive opportunities as you approach ownership."
+            * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued guidance and resources throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
+                * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an informed choice."
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery and making the experience informative and enjoyable for their future consideration, without implying urgency. **This is the key fix.**
+                * *Example Implicit Phrasing:* "We invite you to take your time exploring all the innovative features of the {vehicle} and discover how AOE Motors can fit your lifestyle, without any pressure. We're here to provide information and answer any questions at your pace."
+
+        * **Paragraph 5 (Valuable Resources):**
+            * Provide a sentence encouraging them to learn more.
+            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {vehicle} Guide (PDF)").
+            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download AOE {vehicle} Guide (PDF)</a>.</p>"
+
+        * **Paragraph 6 (Call to Action & Closing):**
+            * Conclude with a clear and helpful call to action for any questions.
+            * Express eagerness for their visit.
+            * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
         """
 
         # Generate email content using OpenAI
@@ -439,29 +478,36 @@ async def testdrive_webhook(request: Request):
             * Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement.
             * Example: "<p>Dear {full_name},</p><p>We are thrilled to confirm your upcoming test drive of the {vehicle} on {formatted_date} in {location}. Get ready for an exhilarating experience!</p>"
 
-        * **Paragraph 2 (Vehicle Features & Persuasive Comparison):**
-            * From the provided {chosen_aoe_features}, **select and highlight only 2-3 MOST EXCITING and UNIQUE features**. Integrate these naturally into the paragraph, explicitly mentioning its {vehicle_type} and {powertrain_type}.
-            * Focus on the *experience* and *benefits* those 2-3 features provide. Do NOT simply list features or include more than 3.
+        * **Paragraph 2 (Vehicle Features & Persuasive Comparison - Simplified Language):**
+            * From the provided {chosen_aoe_features}, **select and highlight only 2-3 MOST EXCITING and UNIQUE features**.
+            * **Crucially, translate any technical jargon into simple, benefit-oriented language.** Focus on what the feature *does for the driver* and the *experience* it provides, not just what it *is*. For example, instead of "V8 Twin-Turbo Engine," phrase it as "a powerful engine designed for exhilarating acceleration."
+            * Integrate these naturally into the paragraph, explicitly mentioning its {vehicle_type} and {powertrain_type}. Do NOT simply list features or include more than 3 distinct features in this paragraph.
             * **Crucial Comparison Logic:**
                 * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
                 * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
 
-        * **Paragraph 3 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX):**
+        * **Paragraph 3 (Overall Experience & Broader Benefits - NO new features):**
+            * This paragraph should focus on the *overall driving experience* of the {vehicle} or the *broader benefits* of choosing an AOE vehicle.
+            * **Do NOT introduce any new specific features in this paragraph.** This paragraph is for a more general, appealing description.
+            * If `current_vehicle` is 'exploring', this paragraph can reinforce the idea of discovery, reliability, and the unique possibilities the {vehicle} offers for their lifestyle.
+            * Example: "<p>Beyond its impressive features, the AOE {vehicle} is engineered for a harmonious blend of exhilarating performance and sophisticated comfort, ensuring every drive is a pleasure.</p>" (This is an example, LLM should adapt.)
+
+        * **Paragraph 4 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX for 'exploring'):**
             * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
             * **CRITICAL: This paragraph MUST NOT explicitly mention '{time_frame}' or any specific timeframe (e.g., '0-3 months', '3-6 months', '6-12 months', 'exploring'). Convey the time frame *implicitly* through the tone and focus of the support offered, using phrasing that aligns with their readiness.**
             * If `time_frame` is '0-3-months': Emphasize AOE Motors' readiness to support their swift decision, hinting at tailored support and exclusive opportunities for those ready to embrace the future soon.
                 * *Example Implicit Phrasing:* "We understand you're ready to make a swift decision, and our team is poised to offer tailored support and exclusive opportunities as you approach ownership."
             * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued guidance and resources throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
-                * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an fresh choice."
-            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery and making the experience informative and enjoyable for their future consideration, without implying urgency.
-                * *Example Implicit Phrasing:* "We invite you to take your time exploring all the innovative features of the {vehicle} and discover how AOE Motors can fit your lifestyle, without any pressure."
+                * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an informed choice."
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing purely on discovery and making the experience informative and enjoyable for their future consideration, without any hint of urgency or swift decisions. The goal is to provide resources and be available for questions at their pace.
+                * *Example Implicit Phrasing (stronger emphasis for 'exploring'):* "We're here to support you every step of the way as you explore your options. Please feel free to take your time discovering all that the AOE {vehicle} has to offer, and we're always available to answer any questions you may have."
 
-        * **Paragraph 4 (Valuable Resources):**
+        * **Paragraph 5 (Valuable Resources):**
             * Provide a sentence encouraging them to learn more.
             * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {vehicle} Guide (PDF)").
             * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download AOE {vehicle} Guide (PDF)</a>.</p>"
 
-        * **Paragraph 5 (Call to Action & Closing):**
+        * **Paragraph 6 (Call to Action & Closing):**
             * Conclude with a clear and helpful call to action for any questions.
             * Express eagerness for their visit.
             * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
@@ -547,7 +593,7 @@ async def testdrive_webhook(request: Request):
                 email=email,
                 vehicle=vehicle,
                 vehicle_type=vehicle_type,
-                powertrain_type=powertrain_type,
+                powertrain_type=powrain_type,
                 formatted_date=formatted_date,
                 location=location,
                 current_vehicle=current_vehicle,
