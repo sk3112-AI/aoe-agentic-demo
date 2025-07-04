@@ -68,7 +68,7 @@ def fetch_aoe_vehicle_data_from_website():
     Scrapes vehicle data from the AOE Motors website.
     Returns a dictionary of vehicle data, or None on failure.
     """
-    url = "https://www.aoemotors.com/vehicles"
+    url = "https://aoe-motors.lovable.app/#vehicles"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
