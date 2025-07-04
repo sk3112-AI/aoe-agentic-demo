@@ -16,7 +16,6 @@ import sys
 from openai import OpenAI
 import uuid
 from supabase import create_client, Client
-from playwright.async_api import async_playwright # CHANGED: Import async_playwright
 
 # Load environment variables (keep this for local development, Render handles env vars directly)
 load_dotenv()
@@ -37,323 +36,554 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supabase
 
-# Global variable to store cached vehicle data
-# This will be populated once and refreshed periodically
-cached_aoe_vehicles_data = {}
-last_refresh_time = 0
-REFRESH_INTERVAL_SECONDS = 3600 # Refresh every hour
+# --- HARDCODED VEHICLE DATA ---
+# This dictionary replaces the web scraping logic for vehicle data.
+AOE_VEHICLE_DATA = {
+    "AOE Apex": {
+        "type": "Luxury Sedan",
+        "powertrain": "Gasoline",
+        "features": "Premium leather interior, Advanced driver-assistance systems (ADAS), Panoramic sunroof, Bose premium sound system, Adaptive cruise control, Lane-keeping assist, Automated parking, Heated and ventilated seats."
+    },
+    "AOE Volt": {
+        "type": "Electric Compact",
+        "powertrain": "Electric",
+        "features": "Long-range battery (500 miles), Fast charging (80% in 20 min), Regenerative braking, Solar roof charging, Vehicle-to-Grid (V2G) capability, Digital cockpit, Over-the-air updates, Extensive charging network access."
+    },
+    "AOE Thunder": {
+        "type": "Performance SUV",
+        "powertrain": "Gasoline",
+        "features": "V8 Twin-Turbo Engine, Adjustable air suspension, Sport Chrono Package, High-performance braking system, Off-road capabilities, Torque vectoring, 360-degree camera, Ambient lighting, Customizable drive modes."
+    },
+    "AOE Aero": {
+        "type": "Hybrid Crossover",
+        "powertrain": "Hybrid",
+        "features": "Fuel-efficient hybrid system, All-wheel drive, Spacious cargo, Infotainment with large touchscreen, Wireless charging, Hands-free power liftgate, Remote start, Apple CarPlay/Android Auto."
+    },
+    "AOE Stellar": {
+        "type": "Electric Pickup Truck",
+        "powertrain": "Electric",
+        "features": "Quad-motor AWD, 0-60 mph in 3 seconds, 10,000 lbs towing capacity, Frunk (front trunk) storage, Integrated air compressor, Worksite power outlets, Customizable bed configurations, Off-road driving modes."
+    }
+}
 
-# URL of the website to scrape vehicle data from
-scrape_url = "https://aoe-motors.lovable.app/#vehicles" # UPDATED URL
+# --- REMOVED: Global variables for cached_aoe_vehicles_data, LAST_DATA_REFRESH_TIME, REFRESH_INTERVAL_SECONDS ---
+# --- REMOVED: fetch_aoe_vehicle_data_from_website() function ---
+# --- REMOVED: scrape_aoe_vehicles_data() function and its initial call ---
 
-# CORS Middleware for local development and Render deployment
-origins = [
-    "http://localhost",
-    "http://localhost:8501", # Streamlit's default local port
-    "http://localhost:3000",
-    "https://aoe-motors-app-dashboard-g6uawbcwefimsjatxmnc4j.streamlit.app", # Your Streamlit Cloud app URL
-    "https://aoe-agentic-demo.onrender.com", # Your Render backend URL
-    "https://aoe-motors.lovable.app", # Your frontend/website where booking form is
-    "*" # WARNING: Use '*' for development only. For production, restrict to known origins.
-]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- Email Configuration (Moved from Streamlit app as per instructions) ---
-EMAIL_HOST = os.getenv("EMAIL_HOST")
-EMAIL_PORT = os.getenv("EMAIL_PORT")
+# Email configuration
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL_HOST = os.getenv("EMAIL_HOST")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", 465)) # Default to 465 for SSL
 
-ENABLE_EMAIL_SENDING = all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD])
+# Team Email for notifications
+TEAM_EMAIL = os.getenv("TEAM_EMAIL")
 
-if not ENABLE_EMAIL_SENDING:
-    logging.warning("Email sending is not fully configured. Please set EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD environment variables.")
-
-def send_email(to_email: str, subject: str, body: str):
-    if not ENABLE_EMAIL_SENDing:
-        logging.error(f"Email sending not configured. Cannot send email to {to_email}.")
-        return False
-
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = to_email
-    msg['Subject'] = subject
-
-    msg.attach(MIMEText(body, 'plain'))
-
-    try:
-        logging.info(f"Attempting to send email to {to_email}...")
-        server = smtplib.SMTP(EMAIL_HOST, int(EMAIL_PORT))
-        server.starttls() # Secure the connection
-        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(EMAIL_ADDRESS, to_email, text)
-        server.quit()
-        logging.info(f"✅ Email successfully sent to {to_email}.")
-        return True
-    except Exception as e:
-        logging.error(f"❌ Failed to send email to {to_email}: {e}", exc_info=True)
-        return False
-
-# --- OpenAI Configuration ---
+# OpenAI Client setup
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logging.error("OpenAI API Key environment variable not set.")
-    raise ValueError("OpenAI API Key not found. Please set OPENAI_API_KEY in your .env file or Render environment.")
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e:
+        logging.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+        openai_client = None # Ensure it's None if init fails
+else:
+    logging.warning("OPENAI_API_KEY environment variable is not set. AI functionalities will be limited.")
 
 
-# Function to generate initial sales notes and lead score based on user input
-def generate_initial_analysis(name: str, email: str, phone: str, vehicle: str, location: str, preferred_date: str, preferred_time: str, customer_query: str):
-    prompt = f"""
-    You are an AI assistant for AOE Motors. Your task is to analyze a new test drive booking request and generate:
-    1. A concise initial sales note summarizing the lead's key information, needs, and potential next steps for the sales team.
-    2. A lead score (Hot, Warm, Cold) based on the customer's query and details.
-
-    Booking Details:
-    - Name: {name}
-    - Email: {email}
-    - Phone: {phone}
-    - Vehicle of Interest: {vehicle}
-    - Location: {location}
-    - Preferred Date: {preferred_date}
-    - Preferred Time: {preferred_time}
-    - Customer's Query/Message: {customer_query}
-
-    Guidelines for Sales Note:
-    - Summarize customer's interest and any specific questions.
-    - Highlight the vehicle and location.
-    - Suggest immediate next actions for the sales representative (e.g., confirm booking, prepare vehicle info, address specific query).
-    - Keep it brief and actionable.
-
-    Guidelines for Lead Score:
-    - Hot: Clear intent to purchase or test drive, specific questions, good contact info.
-    - Warm: General interest, some details provided, might need more nurturing.
-    - Cold: Very vague query, incomplete info, seems like Browse.
-
-    Example Output Format:
-    SALES_NOTE: [Your generated sales note]
-    LEAD_SCORE: [Hot/Warm/Cold]
+def get_vehicle_resources(vehicle_name: str):
     """
+    Returns mock resource links (YouTube, PDF) for a given vehicle.
+    In a real application, this would fetch from a database or API.
+    """
+    resources = {
+        "AOE Apex": { # Updated to full name
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_apex_overview",
+            "pdf_link": "https://www.aoemotors.com/docs/apex_guide.pdf"
+        },
+        "AOE Volt": { # Updated to full name
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_volt_review",
+            "pdf_link": "https://www.aoemotors.com/docs/volt_specs.pdf"
+        },
+        "AOE Thunder": { # Added full name
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_thunder_power",
+            "pdf_link": "https://www.aoemotors.com/docs/thunder_brochure.pdf"
+        },
+        "AOE Aero": { # Added full name
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_aero_features",
+            "pdf_link": "https://www.aoemotors.com/docs/aero_brochure.pdf"
+        },
+        "AOE Stellar": { # Added full name
+            "youtube_link": "https://www.youtube.com/watch?v=aoe_stellar_reveal",
+            "pdf_link": "https://www.aoemotors.com/docs/stellar_specs.pdf"
+        }
+    }
+    return resources.get(vehicle_name, {
+        "youtube_link": "https://www.youtube.com/watch?v=aoe_generic_overview",
+        "pdf_link": "https://www.aoemotors.com/docs/generic_guide.pdf"
+    })
 
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o", # Or "gpt-3.5-turbo" for faster/cheaper
-            messages=[
-                {"role": "system", "content": "You are a helpful sales assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=300
-        )
-        content = response.choices[0].message.content.strip()
-        
-        sales_note_line = next((line for line in content.split('\n') if line.startswith("SALES_NOTE:")), "SALES_NOTE: No specific note generated.")
-        lead_score_line = next((line for line in content.split('\n') if line.startswith("LEAD_SCORE:")), "LEAD_SCORE: Warm") # Default to Warm
+# CORS configuration to allow all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"], # Allows all headers
+)
 
-        sales_note = sales_note_line.replace("SALES_NOTE:", "").strip()
-        lead_score = lead_score_line.replace("LEAD_SCORE:", "").strip()
-        
-        # Ensure lead_score is one of the allowed values
-        if lead_score not in ["Hot", "Warm", "Cold"]:
-            lead_score = "Warm" # Fallback if AI hallucinates a different score
-
-        return sales_note, lead_score
-
-    except Exception as e:
-        logging.error(f"Error generating initial analysis with OpenAI: {e}", exc_info=True)
-        return f"Error generating notes: {e}", "Warm" # Default to Warm on error
+# --- DEBUG LOGGING ENDPOINT ---
+@app.get("/debug-logs")
+async def get_debug_logs():
+    """Endpoint to retrieve recent debug logs."""
+    logging.info("Debug logs requested.")
+    return {"message": "Debug logging is active. Check server console for full logs."}
+# --- END DEBUG LOGGING ---
 
 
-# --- Web Scraping Function (UPDATED TO USE ASYNC PLAYWRIGHT) ---
-async def fetch_aoe_vehicle_data_from_website(): # CHANGED: Made function async
-    global cached_aoe_vehicles_data
-    logging.info("Attempting to refresh cached vehicle data using Async Playwright...")
-    try:
-        async with async_playwright() as p: # CHANGED: Used async_playwright
-            browser = await p.chromium.launch(headless=True) # CHANGED: await
-            page = await browser.new_page() # CHANGED: await
-            await page.goto(scrape_url, wait_until="networkidle") # CHANGED: await and wait_until
+@app.get("/")
+async def read_root():
+    """Root endpoint for the API."""
+    return {"message": "Welcome to AOE Motors Test Drive API. Send a POST request to /webhook/testdrive to book a test drive."}
 
-            # Wait for the specific vehicle cards to load. Adjust selector if needed.
-            try:
-                await page.wait_for_selector(".vehicle-card", timeout=15000) # CHANGED: await
-                logging.info("Vehicle cards found, proceeding with scraping.")
-            except Exception as e:
-                logging.warning(f"Timeout waiting for .vehicle-card selector, page might not have fully loaded dynamic content: {e}")
-                # Even if timeout, proceed to get content, maybe some static content is there
-
-            html_content = await page.content() # CHANGED: await
-            await browser.close() # CHANGED: await
-
-        # logging.info(f"Raw HTML content from {scrape_url}:\n{html_content[:2000]}...") # Debugging line - keep or remove if not needed
-
-        soup = BeautifulSoup(html_content, 'html.parser')
-
-        vehicles = {}
-        vehicle_cards = soup.find_all('div', class_='vehicle-card')
-
-        logging.info(f"Found {len(vehicle_cards)} vehicle cards on the page.")
-
-        for card in vehicle_cards:
-            name = card.find('h2', class_='vehicle-title').text.strip() if card.find('h2', class_='vehicle-title') else 'N/A'
-            
-            # Extract basic details like type and powertrain
-            type_tag = card.find('p', class_='vehicle-type')
-            vehicle_type = type_tag.text.replace('Type:', '').strip() if type_tag else 'N/A'
-
-            powertrain_tag = card.find('p', class_='vehicle-powertrain')
-            powertrain = powertrain_tag.text.replace('Powertrain:', '').strip() if powertrain_tag else 'N/A'
-            
-            features = []
-            features_list = card.find('ul', class_='vehicle-features')
-            if features_list:
-                for feature_item in features_list.find_all('li'):
-                    features.append(feature_item.text.strip())
-            
-            vehicles[name] = {
-                "name": name,
-                "type": vehicle_type,
-                "powertrain": powertrain,
-                "features": ", ".join(features) if features else "No features listed.",
-                "image_url": card.find('img')['src'] if card.find('img') else 'N/A'
-            }
-        
-        if vehicles:
-            cached_aoe_vehicles_data = vehicles
-            global last_refresh_time
-            last_refresh_time = time.time()
-            logging.info(f"✅ Successfully scraped {len(vehicles)} vehicles from {scrape_url}.")
-        else:
-            logging.warning(f"Successfully scraped 0 vehicles from {scrape_url}. No data to cache.")
-
-    except Exception as e:
-        logging.error(f"❌ Error fetching vehicle data from {scrape_url} using Async Playwright: {e}", exc_info=True)
-        logging.warning("Failed to refresh vehicle data. Keeping existing cached data.")
-
-# Route to get cached vehicle data
+# EXISTING ENDPOINT FOR VEHICLE DATA - NOW SERVING HARDCODED DATA
 @app.get("/vehicles-data")
 async def get_vehicles_data():
-    global last_refresh_time
-    # Refresh data if cache is empty or interval has passed
-    if not cached_aoe_vehicles_data or (time.time() - last_refresh_time) > REFRESH_INTERVAL_SECONDS:
-        await fetch_aoe_vehicle_data_from_website() # CHANGED: await
-    
-    # If after refresh, data is still empty, attempt to re-scrape once more immediately
-    if not cached_aoe_vehicles_data:
-        logging.warning("Cached vehicle data is still empty after initial refresh attempt. Retrying scrape...")
-        await fetch_aoe_vehicle_data_from_website() # CHANGED: await
-    
-    if not cached_aoe_vehicles_data:
-        raise HTTPException(status_code=503, detail="Vehicle data not available. Scraping failed.")
-    
-    return cached_aoe_vehicles_data
+    """
+    Endpoint to retrieve hardcoded AOE Motors vehicle data.
+    """
+    try:
+        # Directly return the hardcoded data
+        return AOE_VEHICLE_DATA
+    except Exception as e:
+        logging.error(f"❌ Error retrieving vehicle data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve vehicle data.")
 
-# Ensure data is fetched when the application starts
-@app.on_event("startup")
-async def startup_event():
-    logging.info("Backend starting up. Initializing vehicle data scrape...")
-    # Trigger initial data fetch immediately upon startup
-    await fetch_aoe_vehicle_data_from_website() # CHANGED: await
+# NEW ENDPOINT 1: Update Booking Status and Sales Notes
+class UpdateBookingRequest(BaseModel):
+    request_id: str
+    action_status: str
+    sales_notes: str = None # Optional, can be empty
 
+@app.post("/update-booking")
+async def update_booking(request_body: UpdateBookingRequest):
+    """
+    Endpoint to update a booking's action_status and sales_notes in Supabase.
+    """
+    try:
+        update_data = {
+            "action_status": request_body.action_status,
+            "sales_notes": request_body.sales_notes
+        }
+        response = supabase.from_(SUPABASE_TABLE_NAME).update(update_data).eq('request_id', request_body.request_id).execute()
 
-# Define the request body model for the webhook
-class TestDriveRequest(BaseModel):
-    name: str
-    email: str
-    phone: str
-    vehicle: str
-    location: str
-    preferred_date: str
-    preferred_time: str
-    customer_query: str
+        if response.data:
+            logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
+            return {"status": "success", "message": "Booking updated successfully."}
+        else:
+            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
+            raise HTTPException(status_code=500, detail="Failed to update booking.")
+    except Exception as e:
+        logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
-# Webhook endpoint to receive test drive requests
-@app.post("/webhook/testdrive")
-async def receive_test_drive_request(request: TestDriveRequest):
-    request_id = str(uuid.uuid4()) # Generate a unique request ID
-    logging.info(f"Received new test drive request (request_id: {request_id}): {request.dict()}")
+# NEW ENDPOINT 2: Draft and Send Follow-up Email
+class DraftAndSendEmailRequest(BaseModel):
+    customer_name: str
+    customer_email: str
+    vehicle_name: str
+    sales_notes: str
+    vehicle_details: dict # Pass the relevant vehicle details from frontend
+
+@app.post("/draft-and-send-followup-email")
+async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
+    """
+    Endpoint to draft an AI email based on sales notes and send it to the customer.
+    """
+    logging.info(f"Received request to draft and send email for {request_body.customer_name}.")
 
     try:
-        # Generate initial sales notes and lead score
-        initial_sales_note, lead_score = generate_initial_analysis(
-            name=request.name,
-            email=request.email,
-            phone=request.phone,
-            vehicle=request.vehicle,
-            location=request.location,
-            preferred_date=request.preferred_date,
-            preferred_time=request.preferred_time,
-            customer_query=request.customer_query
+        features_str = request_body.vehicle_details.get("features", "cutting-edge technology and a luxurious experience.")
+        vehicle_type = request_body.vehicle_details.get("type", "vehicle")
+        powertrain = request_body.vehicle_details.get("powertrain", "advanced performance")
+
+        prompt = f"""
+        Draft a polite, helpful, and persuasive follow-up email to a customer named {request_body.customer_name}.
+
+        **Customer Information:**
+        - Name: {request_body.customer_name}
+        - Email: {request_body.customer_email}
+        - Vehicle of Interest: {request_body.vehicle_name} ({vehicle_type}, {powertrain} powertrain)
+        - Customer Issues/Comments (from sales notes): "{request_body.sales_notes}"
+
+        **AOE {request_body.vehicle_name} Key Features:**
+        - {features_str}
+
+        **Email Instructions:**
+        - Start with a polite greeting.
+        - Acknowledge their test drive or recent interaction.
+        - **Crucially, directly address the customer's stated issues from the sales notes.** For each issue mentioned, explain how specific features of the AOE {request_body.vehicle_name} (from the provided list) directly resolve or alleviate that concern.
+            - If "high EV cost" is mentioned: Focus on long-term savings, reduced fuel costs, potential tax credits, Vehicle-to-Grid (V2G) if applicable (Volt).
+            - If "charging anxiety" is mentioned: Highlight ultra-fast charging, solar integration (Volt), extensive charging network, range.
+            - If other issues are mentioned: Adapt relevant features.
+        - If no specific issues are mentioned, write a general follow-up highlighting key benefits.
+        - End with a call to action to schedule another call or visit to discuss further.
+        - Maintain a professional, empathetic, and persuasive tone.
+        - **Output only the email content (Subject and Body), in plain text format.** Do NOT use HTML.
+        - **Separate Subject and Body with "Subject: " at the beginning of the subject line.**
+        """
+
+        # Generate email content using OpenAI
+        logging.info(f"Generating follow-up email for {request_body.customer_email} with OpenAI...")
+        completion = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", # You can use "gpt-4o" for better quality if available
+            messages=[
+                {"role": "system", "content": "You are a helpful and persuasive sales assistant for AOE Motors."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=600
         )
-        logging.info(f"Generated initial sales note for {request_id}: {initial_sales_note}")
-        logging.info(f"Generated lead score for {request_id}: {lead_score}")
+        draft = completion.choices[0].message.content.strip()
 
-        # Send confirmation email to the customer
-        customer_subject = "AOE Motors: Your Test Drive Request Confirmation"
-        customer_body = f"""Dear {request.name},
+        subject_line = "Follow-up from AOE Motors"
+        body_content = draft
+        if "Subject:" in draft:
+            parts = draft.split("Subject:", 1)
+            subject_line = parts[1].split("\n", 1)[0].strip()
+            body_content = parts[1].split("\n", 1)[1].strip()
+        
+        logging.info(f"Generated Follow-up Subject: {subject_line}")
 
-Thank you for your interest in a test drive with AOE Motors!
+        # Send the email
+        if EMAIL_ADDRESS and EMAIL_PASSWORD and EMAIL_HOST and EMAIL_PORT:
+            msg = MIMEMultipart()
+            msg["From"] = EMAIL_ADDRESS
+            msg["To"] = request_body.customer_email
+            msg["Subject"] = subject_line
+            msg.attach(MIMEText(body_content, "plain"))
 
-We have received your request for a test drive of the:
-- Vehicle: {request.vehicle}
-- Location: {request.location}
-- Preferred Date: {request.preferred_date}
-- Preferred Time: {request.preferred_time}
+            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(msg)
+            logging.info(f"✅ Follow-up email sent to {request_body.customer_email}")
+            return {"status": "success", "message": "Email drafted and sent successfully!", "subject": subject_line, "body": body_content}
+        else:
+            logging.warning("Email sending credentials not fully configured. Email not sent.")
+            return {"status": "warning", "message": "Email drafted, but not sent (credentials missing).", "subject": subject_line, "body": body_content}
 
-A sales representative will contact you shortly to confirm the details and answer any specific questions you may have regarding your query: "{request.customer_query}".
+    except Exception as e:
+        logging.error(f"🚨 Error drafting or sending email for {request_body.customer_name}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during email process: {e}")
 
-We look forward to seeing you!
 
-Best regards,
-The AOE Motors Team
-"""
-        send_email(request.email, customer_subject, customer_body)
+@app.post("/webhook/testdrive")
+async def testdrive_webhook(request: Request):
+    logging.info("Webhook /testdrive received a request.")
+    data = await request.json()
 
-        # Send notification email to the sales team (or relevant personnel)
-        sales_subject = f"NEW TEST DRIVE LEAD: {request.name} - {request.vehicle}"
-        sales_body = f"""A new test drive request has been submitted:
+    logging.debug(f"Received data: {data}")
 
-Request ID: {request_id}
-Name: {request.name}
-Email: {request.email}
-Phone: {request.phone}
-Vehicle of Interest: {request.vehicle}
-Location: {request.location}
-Preferred Date: {request.preferred_date}
-Preferred Time: {request.preferred_time}
-Customer Query: {request.customer_query}
+    # Extract request_id for idempotency
+    request_id = data.get("requestId")
+    if not request_id:
+        # Generate a UUID if requestId is not provided by the client, for idempotency
+        request_id = str(uuid.uuid4())
+        logging.warning(f"No 'requestId' provided in the payload. Generating new: {request_id}")
 
-Initial Sales Note: {initial_sales_note}
-Lead Score: {lead_score}
+    # --- Idempotency Check (before processing or sending emails) ---
+    try:
+        response = supabase.from_(SUPABASE_TABLE_NAME).select("id").eq("request_id", request_id).execute()
+        if response.data:
+            logging.info(f"Duplicate request (requestId: {request_id}) received. Already processed. Ignoring to prevent continuous emails.")
+            return {"status": "success", "message": "Test drive request already processed."}
+    except Exception as e:
+        logging.error(f"Error during Supabase idempotency check for requestId {request_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error during idempotency check: {e}")
+    # --- End Idempotency Check ---
 
-Please follow up with this lead promptly.
-"""
-        # This email would go to a sales team's inbox, for example
-        # For demo, you might send it to a test email address
-        send_email(os.getenv("SALES_TEAM_EMAIL", EMAIL_ADDRESS), sales_subject, sales_body) # Defaults to sender if not set
+    full_name = data.get("fullName", "")
+    email = data.get("email", "")
+    vehicle = data.get("vehicle", "")
+    date = data.get("date", "")
+    location = data.get("location", "")
+    current_vehicle = data.get("currentVehicle", "no vehicle").lower().strip()
+    time_frame = data.get("timeFrame", "exploring").lower().strip()
 
-        # Save booking data to Supabase
+    try:
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%B %d, %Y")
+    except ValueError as e:
+        logging.error(f"Error parsing date '{date}': {e}", exc_info=True)
+        return {"status": "error", "message": "Invalid date format"}
+
+    # --- Use HARDCODED VEHICLE DATA ---
+    # Removed global caching logic and web scraping calls here.
+    vehicle_info = AOE_VEHICLE_DATA.get(vehicle, {
+        "type": "vehicle",
+        "powertrain": "advanced performance",
+        "features": "cutting-edge technology and futuristic design."
+    })
+
+    vehicle_type = vehicle_info["type"]
+    powertrain_type = vehicle_info["powertrain"]
+    chosen_aoe_features = vehicle_info["features"]
+
+    # --- Get Dynamic Resource Links ---
+    resources = get_vehicle_resources(vehicle)
+    youtube_link = resources["youtube_link"]
+    pdf_link = resources["pdf_link"]
+
+
+    # Determine tone based on time frame for email body and subject
+    tone_instruction_body = "The tone should be enthusiastic and persuasive, highlighting immediate benefits."
+    tone_instruction_subject = "Use a highly persuasive and exciting tone."
+    if time_frame == "0-3-months":
+        tone_instruction_body = "The tone should be highly persuasive, emphasizing immediate benefits and exclusive offers for their upcoming purchase decision, *without* implying the test drive itself is the only window for these benefits."
+        tone_instruction_subject = "Use a highly persuasive and exciting tone, suggesting urgency related to purchasing."
+    elif time_frame == "3-6-months":
+        tone_instruction_body = "The tone should be informative and encouraging, focusing on future benefits and guiding them through the next steps in their consideration process."
+        tone_instruction_subject = "Use an informative and encouraging tone, highlighting key features."
+    elif time_frame == "6-12-months":
+        tone_instruction_body = "The tone should be informative and helpful, inviting further exploration and offering detailed insights for their long-term decision-making."
+        tone_instruction_subject = "Use an informative and helpful tone, suggesting further research."
+    elif time_frame == "exploring":
+        tone_instruction_body = "The tone should be welcoming and inviting, providing general information without pressure and encouraging casual exploration and discovery."
+        tone_instruction_subject = "Use a welcoming and inviting tone, focusing on discovery."
+
+
+    generated_subject = ""
+    generated_body = ""
+    lead_score = "Unknown" # Default value
+
+    try:
+        if not OPENAI_API_KEY or not openai_client:
+            raise ValueError("OpenAI client not initialized. Check API key.")
+
+        # --- 1. Dynamic Subject Line Generation ---
+        logging.info(f"Attempting to generate subject line for {email} using OpenAI...")
+        subject_prompt = f"""
+        Generate a concise and engaging email subject line for a test drive confirmation.
+
+        **Context:**
+        - Customer: {full_name}
+        - Vehicle: {vehicle} (Type: {vehicle_type}, Powertrain: {powertrain_type})
+        - Test Drive Date: {formatted_date}
+        - Location: {location}
+        - Customer's Current Vehicle: {current_vehicle}
+        - Purchase Time Frame: {time_frame}
+
+        **Instructions:**
+        - {tone_instruction_subject}
+        - Keep it brief (under 15 words).
+        - Do NOT include "Subject:" or any salutation/closing in the output.
+        - Example: "Your Apex Test Drive is Confirmed!" or "Experience the Volt: Your Test Drive Awaits!"
+        - **STRICTLY ensure factual accuracy about the vehicle type and powertrain.**
+        - **Do NOT confuse 'Vehicle Type' with 'Powertrain Type'.** For {vehicle}, the vehicle type is {vehicle_type} and the powertrain is {powertrain_type}.
+        """
+        subject_completion = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, specializing in catchy email subjects. You must be factually accurate about vehicle details."},
+                {"role": "user", "content": subject_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=50
+        )
+        generated_subject = subject_completion.choices[0].message.content.strip()
+        logging.debug(f"Generated Subject: '{generated_subject}'")
+
+
+        # --- 2. Generate Complete Email Body (UPDATED PROMPT with HTML enforcement and time frame fix) ---
+        logging.info(f"Attempting to generate email body for {email} using OpenAI...")
+        body_prompt = f"""
+        You are an AI assistant for AOE Motors, crafting a personalized test drive confirmation email.
+
+        **Goal:** Generate the complete body of a professional, engaging, and highly persuasive email. The email should be easy to read, visually appealing, concise, and relevant.
+
+        **Customer Details:**
+        - Full Name: {full_name}
+        - Email: {email}
+        - Vehicle of Interest: {vehicle}
+        - Vehicle Type: {vehicle_type}
+        - Vehicle Powertrain: {powertrain_type}
+        - Test Drive Date: {formatted_date}
+        - Test Drive Location: {location}
+        - Customer's Current Vehicle: {current_vehicle} (if 'no vehicle', indicate they are exploring new options)
+        - Purchase Time Frame: {time_frame} (refers to purchase intent/readiness, NOT test drive date)
+
+        **AOE Vehicle Features (for {vehicle}):**
+        - {chosen_aoe_features}
+
+        **Resource Links (for {vehicle}):**
+        - YouTube Link: {youtube_link}
+        - PDF Guide Link: {pdf_link}
+
+        **Instructions for Email Content:**
+        1.  Start with a warm greeting to {full_name}.
+        2.  **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.**
+        3.  **STRICT Formatting Output Rules (MUST use HTML <p> tags):**
+            * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
+            * **Each logical section/paragraph MUST be entirely enclosed within its own `<p>` and `</p>` tags.**
+            * **Each paragraph (`<p>...</p>`) should be concise (typically 2-4 sentences maximum).**
+            * **Aim for a total of 5-7 distinct HTML paragraphs.**
+            * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
+            * **DO NOT include any section dividers (like '---').**
+            * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
+
+        **Content Structure & Logic (Each point should be a distinct HTML paragraph):**
+
+        * **Paragraph 1 (Greeting & Test Drive Confirmation):**
+            * Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement.
+            * Example: "<p>Dear {full_name},</p><p>We are thrilled to confirm your upcoming test drive of the {vehicle} on {formatted_date} in {location}. Get ready for an exhilarating experience!</p>"
+
+        * **Paragraph 2 (Vehicle Features & Persuasive Comparison):**
+            * From the provided {chosen_aoe_features}, **select and highlight only 2-3 MOST EXCITING and UNIQUE features**. Integrate these naturally into the paragraph, explicitly mentioning its {vehicle_type} and {powertrain_type}.
+            * Focus on the *experience* and *benefits* those 2-3 features provide. Do NOT simply list features or include more than 3.
+            * **Crucial Comparison Logic:**
+                * If `current_vehicle` is provided (and not 'no vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
+                * If `current_vehicle` is 'no vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
+
+        * **Paragraph 3 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX):**
+            * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
+            * **CRITICAL: This paragraph MUST NOT explicitly mention '{time_frame}' or any specific timeframe (e.g., '0-3 months', '3-6 months', '6-12 months', 'exploring'). Convey the time frame *implicitly* through the tone and focus of the support offered, using phrasing that aligns with their readiness.**
+            * If `time_frame` is '0-3-months': Emphasize AOE Motors' readiness to support their swift decision, hinting at tailored support and exclusive opportunities for those ready to embrace the future soon.
+                * *Example Implicit Phrasing:* "We understand you're ready to make a swift decision, and our team is poised to offer tailored support and exclusive opportunities as you approach ownership."
+            * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued guidance and resources throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
+                * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an fresh choice."
+            * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing on discovery and making the experience informative and enjoyable for their future consideration, without implying urgency.
+                * *Example Implicit Phrasing:* "We invite you to take your time exploring all the innovative features of the {vehicle} and discover how AOE Motors can fit your lifestyle, without any pressure."
+
+        * **Paragraph 4 (Valuable Resources):**
+            * Provide a sentence encouraging them to learn more.
+            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download AOE {vehicle} Guide (PDF)").
+            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download AOE {vehicle} Guide (PDF)</a>.</p>"
+
+        * **Paragraph 5 (Call to Action & Closing):**
+            * Conclude with a clear and helpful call to action for any questions.
+            * Express eagerness for their visit.
+            * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
+        """
+        body_completion = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted test drive confirmation emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
+                {"role": "user", "content": body_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        generated_body = body_completion.choices[0].message.content.strip()
+        logging.debug(f"Generated Body (partial): {generated_body[:100]}...")
+
+
+        # --- Rule-Based Lead Scoring ---
+        logging.info(f"Applying rule-based lead scoring for {email}...")
+        lead_score = "Cold" # Default to Cold
+
+        if time_frame == "0-3-months":
+            lead_score = "Hot"
+        elif time_frame == "3-6-months": # Interpreting "near to hot" as Warm
+            lead_score = "Warm"
+        elif time_frame == "6-12-months":
+            lead_score = "Warm"
+        elif time_frame == "exploring":
+            lead_score = "Cold"
+        logging.info(f"Rule-based Lead Score for {email}: '{lead_score}'")
+
+
+        # --- Email Sending to Customer ---
+        if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
+            raise ValueError("One or more email configuration environment variables are missing or empty.")
+
+        msg_customer = MIMEMultipart()
+        msg_customer["From"] = EMAIL_ADDRESS
+        msg_customer["To"] = email
+        msg_customer["Subject"] = generated_subject
+        msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
+
+        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+            logging.debug(f"Attempting to connect to SMTP server for customer email: {EMAIL_HOST}:{EMAIL_PORT}")
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg_customer)
+            logging.info(f"✅ Customer email successfully sent to {email} (Subject: '{generated_subject}', Score: '{lead_score}').")
+
+        # --- Email Sending to Team ---
+        if TEAM_EMAIL and EMAIL_ADDRESS and EMAIL_PASSWORD: # Ensure TEAM_EMAIL is configured
+            team_subject = f"New Test Drive Booking for {vehicle}" # Define team_subject here
+            # Changed to .format() for robustness against nested f-string issues
+            team_body = """
+            Dear Team,
+
+            A new test drive booking has been received.
+
+            **Customer Details:**
+            - Name: {full_name}
+            - Email: {email}
+            - Vehicle: {vehicle} (Type: {vehicle_type}, Powertrain: {powertrain_type})
+            - Date: {formatted_date}
+            - Location: {location}
+            - Current Vehicle: {current_vehicle}
+            - Time Frame: {time_frame}
+            - **Lead Score: {lead_score}**
+
+            ---
+            **Email Content Sent to Customer:**
+            Subject: {generated_subject}
+            To: {email}
+            From: {EMAIL_ADDRESS}
+
+            {generated_body}
+            ---
+
+            Please follow up accordingly.
+
+            Best regards,
+            AOE Motors System
+            """.format(
+                full_name=full_name,
+                email=email,
+                vehicle=vehicle,
+                vehicle_type=vehicle_type,
+                powertrain_type=powertrain_type,
+                formatted_date=formatted_date,
+                location=location,
+                current_vehicle=current_vehicle,
+                time_frame=time_frame,
+                lead_score=lead_score,
+                generated_subject=generated_subject,
+                EMAIL_ADDRESS=EMAIL_ADDRESS,
+                generated_body=generated_body
+            )
+            msg_team = MIMEMultipart()
+            msg_team["From"] = EMAIL_ADDRESS
+            msg_team["To"] = TEAM_EMAIL
+            msg_team["Subject"] = team_subject
+            msg_team.attach(MIMEText(team_body, "plain")) # Plain text for internal clarity
+
+            with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+                logging.debug(f"Attempting to connect to SMTP server for team email: {EMAIL_HOST}:{EMAIL_PORT}")
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(msg_team)
+                logging.info(f"✅ Team notification email sent to {TEAM_EMAIL} (Subject: '{team_subject}').")
+        else:
+            logging.warning("TEAM_EMAIL not configured or email sending credentials missing. Skipping team notification.")
+
+        # --- Save to Supabase ---
         try:
             booking_data = {
                 "request_id": request_id,
-                "name": request.name,
-                "email": request.email,
-                "phone": request.phone,
-                "vehicle": request.vehicle,
-                "location": request.location,
-                "preferred_date": request.preferred_date,
-                "preferred_time": request.preferred_time,
-                "customer_query": request.customer_query,
-                "initial_sales_note": initial_sales_note,
-                "generated_subject": customer_subject, # Storing the customer email subject for reference
-                "generated_body": customer_body, # Storing the customer email body for reference
+                "full_name": full_name,
+                "email": email,
+                "vehicle": vehicle,
+                "booking_date": date, # Store as YYYY-MM-DD
+                "location": location,
+                "current_vehicle": current_vehicle,
+                "time_frame": time_frame,
+                "generated_subject": generated_subject,
+                "generated_body": generated_body,
                 "lead_score": lead_score,
                 "booking_timestamp": datetime.now().isoformat(), # ISO format for Supabase datetime
                 "action_status": 'New Lead', # Default
