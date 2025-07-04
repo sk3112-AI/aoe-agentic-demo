@@ -33,7 +33,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     logging.error("Supabase URL or Key environment variables are not set.")
     raise ValueError("Supabase credentials not found. Please set SUPABASE_URL and SUPABASE_KEY in your .env file or Render environment.")
 
-# Corrected variable names here
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supabase
 
@@ -392,16 +391,16 @@ async def testdrive_webhook(request: Request):
             * **Pattern A: If `current_vehicle` is provided (and NOT 'No-vehicle' or 'exploring'):**
                 * **YOU MUST start this paragraph by subtly positioning the {vehicle} as a significant, transformative upgrade compared to their current vehicle.**
                 * **From the provided {chosen_aoe_features}, select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} that highlight this upgrade.**
-                * **Translate any technical jargon into clear benefits for the driver.**
-                * **Example (replace feature benefits with actual generated text):** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the {vehicle} {vehicle_type}. Its [GENERATE 1-2 KEY FEATURES AND THEIR BENEFITS HERE, e.g., 'luxurious interior comfort' or 'advanced safety systems'] offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
+                * **Translate any technical jargon into clear, simple benefits for the driver. AVOID using technical jargon directly if a simpler benefit can be stated.**
+                * **Example:** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the {vehicle} {vehicle_type}. Its [GENERATE 2-3 KEY FEATURES AND THEIR BENEFITS HERE, translating technical terms into clear, simple benefits for the driver, e.g., 'luxurious interior comfort and cutting-edge safety systems'] offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
                 * **Crucial:** Ensure this comparison is subtle and positive.
 
             * **Pattern B: If `current_vehicle` IS 'No-vehicle' or 'exploring':**
                 * Frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
                 * **From the provided {chosen_aoe_features}, select 2-3 MOST EXCITING and UNIQUE features of the {vehicle}.**
-                * **Translate any technical jargon into clear benefits for the driver.**
+                * **Translate any technical jargon into clear, simple benefits for the driver. AVOID using technical jargon directly if a simpler benefit can be stated.**
                 * **CRITICAL: DO NOT use terms like 'owner' or attempt ANY comparison to a previous vehicle in this scenario.**
-                * **Example (replace feature benefits with actual generated text):** "<p>Prepare to be amazed by the {vehicle} {vehicle_type} with its [GENERATE 1-2 KEY FEATURES AND THEIR BENEFITS HERE, e.g., 'impressive range and rapid charging' or 'dynamic handling and powerful acceleration']. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
+                * **Example:** "<p>Prepare to be amazed by the {vehicle} {vehicle_type} with its [GENERATE 2-3 KEY FEATURES AND THEIR BENEFITS HERE, translating technical terms into clear, simple benefits for the driver, e.g., 'impressive range and rapid charging capabilities, alongside a sophisticated digital cockpit']. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
 
         * **Paragraph 3 (Overall Experience & Broader Benefits - NO new features):**
             * This paragraph should focus on the *overall driving experience* of the {vehicle} or the * broader benefits* of choosing an AOE vehicle.
@@ -421,16 +420,16 @@ async def testdrive_webhook(request: Request):
                 * *Example Implicit Phrasing (stronger emphasis for 'exploring', and explicit negative constraint for LLM):* "We are delighted to support you at your own pace as you explore the possibilities. There's no pressure; our team is here to provide any information or answer any questions you may have as you consider your options for the future." **Absolutely avoid any phrasing like 'swift decision', 'ready to make a purchase', 'approach ownership' for 'exploring' customers.**
 
         * **Paragraph 5 (Valuable Resources):**
-            * Provide a sentence encouraging them to learn more about the {vehicle}.
-            * Include two distinct hyperlinks: one for the `YouTube Link` and one for the `PDF Guide Link`.
-            * **The link text for the YouTube link MUST be "Watch the {vehicle} Overview Video".**
-            * **The link text for the PDF link MUST be "Download the {vehicle} Guide (PDF)".**
+            * **MUST generate a sentence encouraging them to learn more about the {vehicle}. Then, immediately follow with TWO distinct HTML hyperlinks.**
+            * **The first hyperlink MUST be for the YouTube Link (`{youtube_link}`). Its link text MUST be "Watch the {vehicle} Overview Video".**
+            * **The second hyperlink MUST be for the PDF Guide Link (`{pdf_link}`). Its link text MUST be "Download the {vehicle} Guide (PDF)".**
             * **CRITICAL: Ensure the link text for both links uses the exact `{vehicle}` value and does NOT add 'AOE' or any other brand name prefix again if it's already present in `{vehicle}`.**
+            * **YOU MUST FOLLOW THIS HTML STRUCTURE for the entire paragraph:** `<p>To learn even more about the {vehicle}, we invite you to watch our detailed video and download the comprehensive guide: <a href="{youtube_link}">Watch the {vehicle} Overview Video</a> <a href="{pdf_link}">Download the {vehicle} Guide (PDF)</a></p>`
 
         * **Paragraph 6 (Call to Action & Closing):**
-            * Conclude with a clear and helpful call to action for any questions.
-            * Express eagerness for their visit.
-            * End with "Warm regards, Team AOE Motors" **within the same final paragraph's `<p>` tags.**
+            * **MUST generate a clear and helpful call to action for any questions. Immediately follow with an expression of eagerness for their visit.**
+            * **MUST end with "Warm regards, Team AOE Motors" within the SAME final paragraph's `<p>` tags.**
+            * **YOU MUST FOLLOW THIS HTML STRUCTURE for the entire paragraph:** `<p>For any questions or further assistance, please do not hesitate to contact us. We eagerly await your visit! Warm regards, Team AOE Motors</p>`
         """
         body_completion = openai_client.chat.completions.create(
             model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
