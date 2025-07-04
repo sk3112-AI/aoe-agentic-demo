@@ -183,7 +183,7 @@ async def update_booking(request_body: UpdateBookingRequest):
             logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
             return {"status": "success", "message": "Booking updated successfully."}
         else:
-            logging.error(f"❌ Failed to update booking {request_id}. Response: {response}")
+            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
             raise HTTPException(status_code=500, detail="Failed to update booking.")
     except Exception as e:
         logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
@@ -306,14 +306,14 @@ async def testdrive_webhook(request: Request):
         data = await request.json()
         logging.info(f"Received webhook data: {data}")
 
-        # Extract data from the incoming request
-        full_name = data.get("full_name")
+        # Extract data from the incoming request - CORRECTED KEYS for camelCase
+        full_name = data.get("fullName")
         email = data.get("email")
         vehicle = data.get("vehicle")
         date = data.get("date") # This is YYYY-MM-DD
         location = data.get("location")
-        current_vehicle = data.get("current_vehicle")
-        time_frame = data.get("time_frame")
+        current_vehicle = data.get("currentVehicle")
+        time_frame = data.get("timeFrame")
 
         if not all([full_name, email, vehicle, date, location, current_vehicle, time_frame]):
             raise HTTPException(status_code=400, detail="Missing required test drive booking fields.")
