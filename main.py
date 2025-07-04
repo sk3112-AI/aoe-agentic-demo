@@ -392,7 +392,7 @@ async def testdrive_webhook(request: Request):
                 * **YOU MUST start this paragraph by subtly positioning the {vehicle} as a significant, transformative upgrade compared to their current vehicle.**
                 * **Select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} from {chosen_aoe_features} that highlight this upgrade.**
                 * **Translate any technical jargon into clear benefits for the driver.**
-                * **Example:** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}. Its {feature1_benefit}, {feature2_benefit}, and {feature3_benefit} offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
+                * **Example:** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}. Its {{feature1_benefit}}, {{feature2_benefit}}, and {{feature3_benefit}} offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
                 * **Crucial:** Ensure this comparison is subtle and positive.
 
             * **Pattern B: If `current_vehicle` IS 'No-vehicle' or 'exploring':**
@@ -400,7 +400,7 @@ async def testdrive_webhook(request: Request):
                 * Select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} from {chosen_aoe_features}.
                 * Translate any technical jargon into clear benefits for the driver.
                 * **CRITICAL: DO NOT use terms like 'owner' or attempt ANY comparison to a previous vehicle in this scenario.**
-                * **Example:** "<p>Prepare to be amazed by the AOE {vehicle} {vehicle_type} with its {feature1_benefit}, {feature2_benefit}, and {feature3_benefit}. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
+                * **Example:** "<p>Prepare to be amazed by the AOE {vehicle} {vehicle_type} with its {{feature1_benefit}}, {{feature2_benefit}}, and {{feature3_benefit}}. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
 
         * **Paragraph 3 (Overall Experience & Broader Benefits - NO new features):**
             * This paragraph should focus on the *overall driving experience* of the {vehicle} or the * broader benefits* of choosing an AOE vehicle.
