@@ -33,7 +33,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     logging.error("Supabase URL or Key environment variables are not set.")
     raise ValueError("Supabase credentials not found. Please set SUPABASE_URL and SUPABASE_KEY in your .env file or Render environment.")
 
-supabase: Client = create_client(supabase_url, supabase_key)
+# Corrected variable names here
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supabase
 
 # --- HARDCODED VEHICLE DATA ---
