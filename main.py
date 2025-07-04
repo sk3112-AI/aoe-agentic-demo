@@ -209,6 +209,8 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
         vehicle_type = request_body.vehicle_details.get("type", "vehicle")
         powertrain = request_body.vehicle_details.get("powertrain", "advanced performance")
 
+        # This prompt is for drafting the email using OpenAI
+        # For this function, the AI response needs to be structured as a valid email body only.
         prompt = f"""
         Draft a polite, helpful, and persuasive follow-up email to a customer named {request_body.customer_name}.
 
@@ -223,7 +225,149 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
 
         **Email Instructions:**
         - Start with a polite greeting.
-        - Acknowledge their test drive or recent interaction.
+        - Acknowledge their recent interaction (e.g., test drive, inquiry).
+        - **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.**
+        - **STRICT Formatting Output Rules (MUST use HTML <p> tags):**
+            * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
+            * **Each logical section/paragraph MUST be entirely enclosed within its own `<p>` and `</p>` tags.**
+            * **Each paragraph (`<p>...</p>`) should be concise (typically 2-4 sentences maximum).**
+            * **Aim for a total of 4-6 distinct HTML paragraphs.**
+            * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
+            * **DO NOT include any section dividers (like '---').**
+            * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
+
+        **Content Structure & Logic (Each point should be a distinct HTML paragraph):**
+
+        * **Paragraph 1 (Greeting & Acknowledgment):**
+            * Polite greeting to {request_body.customer_name}.
+            * Acknowledge their recent interaction or interest in the {request_body.vehicle_name}.
+
+        * **Paragraph 2 (Key Features & Benefits):**
+            * Highlight 2-3 most relevant and exciting features of the {request_body.vehicle_name} based on the provided {features_str}.
+            * Translate technical terms into clear benefits for the driver.
+            * Mention the vehicle type ({vehicle_type}) and powertrain ({powertrain}).
+
+        * **Paragraph 3 (Address Sales Notes/Concerns):**
+            * Directly and helpfully address the points raised in {request_body.sales_notes}.
+            * Offer solutions or further information related to their specific comments.
+
+        * **Paragraph 4 (Call to Action & Next Steps):**
+            * Encourage further engagement (e.g., schedule another call, visit showroom, answer more questions).
+            * Reinforce readiness to assist them.
+
+        * **Paragraph 5 (Closing):**
+            * End with a polite closing like "Warm regards, Team AOE Motors".
+        """
+        body_completion = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", # You can choose a different model like "gpt-4o" for better quality if available and cost allows
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant for AOE Motors, crafting personalized, persuasive, human-like, and well-formatted follow-up emails. Your output MUST be in HTML format using <p> tags for paragraphs. You must be absolutely factually accurate about vehicle type and powertrain as provided."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        generated_body = body_completion.choices[0].message.content.strip()
+        logging.debug(f"Generated Body (partial): {generated_body[:100]}...")
+
+        # For follow-up emails, a generic but professional subject line.
+        generated_subject = f"Following Up on Your Interest in the AOE {request_body.vehicle_name}"
+
+        # --- Email Sending Logic ---
+        if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
+            raise ValueError("One or more email configuration environment variables are missing or empty.")
+
+        msg_customer = MIMEMultipart()
+        msg_customer["From"] = EMAIL_ADDRESS
+        msg_customer["To"] = request_body.customer_email
+        msg_customer["Subject"] = generated_subject
+        msg_customer.attach(MIMEText(generated_body, "html"))
+
+        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
+            logging.debug(f"Attempting to connect to SMTP server for follow-up email: {EMAIL_HOST}:{EMAIL_PORT}")
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg_customer)
+            logging.info(f"✅ Follow-up email successfully sent to {request_body.customer_email} (Subject: '{generated_subject}').")
+
+        return {"status": "success", "message": "Follow-up email drafted and sent successfully."}
+
+    except Exception as e:
+        logging.error(f"🚨 An unexpected error occurred during follow-up email processing: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+# ORIGINAL WEBHOOK ENDPOINT: Process incoming test drive requests
+@app.post("/webhook/testdrive")
+async def testdrive_webhook(request: Request):
+    """
+    Webhook endpoint to receive test drive requests.
+    Processes the request, generates an AI email, sends notifications, and saves data.
+    """
+    try:
+        data = await request.json()
+        logging.info(f"Received webhook data: {data}")
+
+        # Extract data from the incoming request
+        full_name = data.get("full_name")
+        email = data.get("email")
+        vehicle = data.get("vehicle")
+        date = data.get("date") # This is YYYY-MM-DD
+        location = data.get("location")
+        current_vehicle = data.get("current_vehicle")
+        time_frame = data.get("time_frame")
+
+        if not all([full_name, email, vehicle, date, location, current_vehicle, time_frame]):
+            raise HTTPException(status_code=400, detail="Missing required test drive booking fields.")
+
+        request_id = str(uuid.uuid4()) # Generate a unique request ID
+
+        # Format date for display
+        try:
+            formatted_date = datetime.strptime(date, "%Y-%m-%d").strftime("%B %d, %Y")
+        except ValueError:
+            formatted_date = date # Fallback if date format is unexpected
+
+        # Retrieve detailed vehicle info from hardcoded data
+        vehicle_info = AOE_VEHICLE_DATA.get(vehicle)
+        if not vehicle_info:
+            logging.warning(f"Vehicle '{vehicle}' not found in hardcoded data.")
+            vehicle_type = "N/A"
+            powertrain_type = "N/A"
+            chosen_aoe_features = "no specific features available"
+        else:
+            vehicle_type = vehicle_info.get("type", "N/A")
+            powertrain_type = vehicle_info.get("powertrain", "N/A")
+            chosen_aoe_features = vehicle_info.get("features", "no specific features available")
+
+        # Get resource links
+        resources = get_vehicle_resources(vehicle)
+        youtube_link = resources["youtube_link"]
+        pdf_link = resources["pdf_link"]
+
+
+        # --- AI Email Generation (Customer) ---
+        logging.info(f"Generating AI email for customer: {email}")
+        body_prompt = f"""
+        Draft a polite, helpful, and persuasive test drive confirmation email to a customer named {full_name}.
+
+        **Customer Information:**
+        - Name: {full_name}
+        - Email: {email}
+        - Vehicle: {vehicle} ({vehicle_type}, {powertrain_type} powertrain)
+        - Test Drive Date: {formatted_date}
+        - Test Drive Location: {location}
+        - Current Vehicle: {current_vehicle}
+        - Purchase Time Frame: {time_frame}
+
+        **AOE {vehicle} Key Features:**
+        - {chosen_aoe_features}
+
+        **Additional Resources:**
+        - YouTube Link: {youtube_link}
+        - PDF Link: {pdf_link}
+
+        **Email Instructions:**
+        - Start with a polite greeting.
+        - Confirm the test drive details (vehicle, date, location) immediately, emphasizing excitement.
         - **Crucial:** **ABSOLUTELY DO NOT include the subject line or any "Subject:" prefix in the email body.**
         - **STRICT Formatting Output Rules (MUST use HTML <p> tags):**
             * **The entire email body MUST be composed of distinct HTML paragraph tags (`<p>...</p>`).**
@@ -303,6 +447,7 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
 
 
         # --- Email Sending to Customer ---
+        generated_subject = f"AOE Test Drive Confirmed! Get Ready for Your {vehicle} Experience"
         if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
             raise ValueError("One or more email configuration environment variables are missing or empty.")
 
