@@ -390,8 +390,12 @@ async def testdrive_webhook(request: Request):
             * **Crucially, translate any technical jargon into simple, benefit-oriented language, focusing on what the feature *does for the driver* and the *experience* it provides.** For example, instead of "V8 Twin-Turbo Engine," phrase it as "a powerful engine designed for exhilarating acceleration." If the feature is "Advanced driver-assistance systems (ADAS)", explain its benefit like "advanced safety features that provide peace of mind." **Do NOT use acronyms without immediate, simple explanation.**
             * Integrate these naturally into the paragraph, explicitly mentioning its {vehicle_type} and {powertrain_type}. Do NOT simply list features or include more than 3 distinct features in this paragraph.
             * **Crucial Comparison Logic:**
-                * If `current_vehicle` is provided (and not 'No-vehicle' or 'exploring'), subtly position the {vehicle} as a significant, transformative upgrade. Example: "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers..." **Avoid any blunt or negative comparisons.**
-                * If `current_vehicle` is 'No-vehicle' or 'exploring', frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
+                * **If `current_vehicle` is provided (and NOT 'No-vehicle' or 'exploring'):**
+                    * **YOU MUST subtly position the {vehicle} as a significant, transformative upgrade.**
+                    * **EXAMPLE:** "As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}, a remarkable {powertrain_type} vehicle that offers unparalleled features compared to your current ride." **Avoid any blunt or negative comparisons; focus on the positive transformation.**
+                * **If `current_vehicle` IS 'No-vehicle' or 'exploring':**
+                    * Frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
+                    * **CRITICAL: DO NOT use terms like 'owner' or attempt ANY comparison to a previous vehicle in this scenario.**
 
         * **Paragraph 3 (Overall Experience & Broader Benefits - NO new features):**
             * This paragraph should focus on the *overall driving experience* of the {vehicle} or the * broader benefits* of choosing an AOE vehicle.
@@ -412,8 +416,8 @@ async def testdrive_webhook(request: Request):
 
         * **Paragraph 5 (Valuable Resources):**
             * Provide a sentence encouraging them to learn more.
-            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the AOE {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download the AOE {vehicle} Guide (PDF)").
-            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the AOE {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download the AOE {vehicle} Guide (PDF)</a>.</p>"
+            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download the {vehicle} Guide (PDF)").
+            * Example: "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download the {vehicle} Guide (PDF)</a>.</p>"
 
         * **Paragraph 6 (Call to Action & Closing):**
             * Conclude with a clear and helpful call to action for any questions.
@@ -533,7 +537,7 @@ async def testdrive_webhook(request: Request):
                 "full_name": full_name,
                 "email": email,
                 "vehicle": vehicle,
-                "booking_date": date, # Store as YYYY-MM-DD
+                "booking_date": date, # Store asYYYY-MM-DD
                 "location": location,
                 "current_vehicle": current_vehicle,
                 "time_frame": time_frame,
