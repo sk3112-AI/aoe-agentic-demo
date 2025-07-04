@@ -16,7 +16,7 @@ import sys
 from openai import OpenAI
 import uuid
 from supabase import create_client, Client
-from playwright.sync_api import sync_playwright # NEW: Import Playwright
+from playwright.async_api import async_playwright # CHANGED: Import async_playwright
 
 # Load environment variables (keep this for local development, Render handles env vars directly)
 load_dotenv()
@@ -77,7 +77,7 @@ if not ENABLE_EMAIL_SENDING:
     logging.warning("Email sending is not fully configured. Please set EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD environment variables.")
 
 def send_email(to_email: str, subject: str, body: str):
-    if not ENABLE_EMAIL_SENDING:
+    if not ENABLE_EMAIL_SENDing:
         logging.error(f"Email sending not configured. Cannot send email to {to_email}.")
         return False
 
@@ -171,29 +171,28 @@ def generate_initial_analysis(name: str, email: str, phone: str, vehicle: str, l
         return f"Error generating notes: {e}", "Warm" # Default to Warm on error
 
 
-# --- Web Scraping Function (UPDATED TO USE PLAYWRIGHT) ---
-def fetch_aoe_vehicle_data_from_website():
+# --- Web Scraping Function (UPDATED TO USE ASYNC PLAYWRIGHT) ---
+async def fetch_aoe_vehicle_data_from_website(): # CHANGED: Made function async
     global cached_aoe_vehicles_data
-    logging.info("Attempting to refresh cached vehicle data using Playwright...")
+    logging.info("Attempting to refresh cached vehicle data using Async Playwright...")
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True) # Run in headless mode (no UI)
-            page = browser.new_page()
-            page.goto(scrape_url, wait_until="networkidle") # Wait until network is idle
+        async with async_playwright() as p: # CHANGED: Used async_playwright
+            browser = await p.chromium.launch(headless=True) # CHANGED: await
+            page = await browser.new_page() # CHANGED: await
+            await page.goto(scrape_url, wait_until="networkidle") # CHANGED: await and wait_until
 
             # Wait for the specific vehicle cards to load. Adjust selector if needed.
-            # This is crucial for dynamically loaded content.
             try:
-                page.wait_for_selector(".vehicle-card", timeout=15000) # Wait up to 15 seconds for a vehicle card
+                await page.wait_for_selector(".vehicle-card", timeout=15000) # CHANGED: await
                 logging.info("Vehicle cards found, proceeding with scraping.")
             except Exception as e:
                 logging.warning(f"Timeout waiting for .vehicle-card selector, page might not have fully loaded dynamic content: {e}")
                 # Even if timeout, proceed to get content, maybe some static content is there
 
-            html_content = page.content() # Get the full rendered HTML
-            browser.close()
+            html_content = await page.content() # CHANGED: await
+            await browser.close() # CHANGED: await
 
-        # logging.info(f"Raw HTML content from {scrape_url}:\n{html_content[:2000]}...") # Debugging line - keep or remove
+        # logging.info(f"Raw HTML content from {scrape_url}:\n{html_content[:2000]}...") # Debugging line - keep or remove if not needed
 
         soup = BeautifulSoup(html_content, 'html.parser')
 
@@ -235,7 +234,7 @@ def fetch_aoe_vehicle_data_from_website():
             logging.warning(f"Successfully scraped 0 vehicles from {scrape_url}. No data to cache.")
 
     except Exception as e:
-        logging.error(f"❌ Error fetching vehicle data from {scrape_url} using Playwright: {e}", exc_info=True)
+        logging.error(f"❌ Error fetching vehicle data from {scrape_url} using Async Playwright: {e}", exc_info=True)
         logging.warning("Failed to refresh vehicle data. Keeping existing cached data.")
 
 # Route to get cached vehicle data
@@ -244,26 +243,24 @@ async def get_vehicles_data():
     global last_refresh_time
     # Refresh data if cache is empty or interval has passed
     if not cached_aoe_vehicles_data or (time.time() - last_refresh_time) > REFRESH_INTERVAL_SECONDS:
-        fetch_aoe_vehicle_data_from_website()
+        await fetch_aoe_vehicle_data_from_website() # CHANGED: await
     
     # If after refresh, data is still empty, attempt to re-scrape once more immediately
-    # This handles cases where the initial scrape might have failed but could succeed on retry
     if not cached_aoe_vehicles_data:
         logging.warning("Cached vehicle data is still empty after initial refresh attempt. Retrying scrape...")
-        fetch_aoe_vehicle_data_from_website() # Retry once
-
+        await fetch_aoe_vehicle_data_from_website() # CHANGED: await
+    
     if not cached_aoe_vehicles_data:
         raise HTTPException(status_code=503, detail="Vehicle data not available. Scraping failed.")
     
     return cached_aoe_vehicles_data
 
 # Ensure data is fetched when the application starts
-# This will happen when Render deploys the app
 @app.on_event("startup")
 async def startup_event():
     logging.info("Backend starting up. Initializing vehicle data scrape...")
     # Trigger initial data fetch immediately upon startup
-    fetch_aoe_vehicle_data_from_website()
+    await fetch_aoe_vehicle_data_from_website() # CHANGED: await
 
 
 # Define the request body model for the webhook
