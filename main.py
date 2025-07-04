@@ -33,7 +33,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     logging.error("Supabase URL or Key environment variables are not set.")
     raise ValueError("Supabase credentials not found. Please set SUPABASE_URL and SUPABASE_KEY in your .env file or Render environment.")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(supabase_url, supabase_key)
 SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supabase
 
 # --- HARDCODED VEHICLE DATA ---
@@ -390,23 +390,23 @@ async def testdrive_webhook(request: Request):
 
             * **Pattern A: If `current_vehicle` is provided (and NOT 'No-vehicle' or 'exploring'):**
                 * **YOU MUST start this paragraph by subtly positioning the {vehicle} as a significant, transformative upgrade compared to their current vehicle.**
-                * **Select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} from {chosen_aoe_features} that highlight this upgrade.**
+                * **From the provided {chosen_aoe_features}, select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} that highlight this upgrade.**
                 * **Translate any technical jargon into clear benefits for the driver.**
-                * **Example:** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the AOE {vehicle} {vehicle_type}. Its {{feature1_benefit}}, {{feature2_benefit}}, and {{feature3_benefit}} offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
+                * **Example (replace feature benefits with actual generated text):** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the {vehicle} {vehicle_type}. Its [GENERATE 1-2 KEY FEATURES AND THEIR BENEFITS HERE, e.g., 'luxurious interior comfort' or 'advanced safety systems'] offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
                 * **Crucial:** Ensure this comparison is subtle and positive.
 
             * **Pattern B: If `current_vehicle` IS 'No-vehicle' or 'exploring':**
                 * Frame it as an exciting new kind of driving experience, a leap into advanced {powertrain_type} {vehicle_type} technology, or an opportunity to discover what makes AOE Motors unique.
-                * Select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} from {chosen_aoe_features}.
-                * Translate any technical jargon into clear benefits for the driver.
+                * **From the provided {chosen_aoe_features}, select 2-3 MOST EXCITING and UNIQUE features of the {vehicle}.**
+                * **Translate any technical jargon into clear benefits for the driver.**
                 * **CRITICAL: DO NOT use terms like 'owner' or attempt ANY comparison to a previous vehicle in this scenario.**
-                * **Example:** "<p>Prepare to be amazed by the AOE {vehicle} {vehicle_type} with its {{feature1_benefit}}, {{feature2_benefit}}, and {{feature3_benefit}}. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
+                * **Example (replace feature benefits with actual generated text):** "<p>Prepare to be amazed by the {vehicle} {vehicle_type} with its [GENERATE 1-2 KEY FEATURES AND THEIR BENEFITS HERE, e.g., 'impressive range and rapid charging' or 'dynamic handling and powerful acceleration']. This {powertrain_type} vehicle redefines driving pleasure, offering a truly exhilarating and sophisticated experience.</p>"
 
         * **Paragraph 3 (Overall Experience & Broader Benefits - NO new features):**
             * This paragraph should focus on the *overall driving experience* of the {vehicle} or the * broader benefits* of choosing an AOE vehicle.
             * **Do NOT introduce any new specific features in this paragraph.** This paragraph is for a more general, appealing description.
             * If `current_vehicle` is 'exploring', this paragraph can reinforce the idea of discovery, reliability, and the unique possibilities the {vehicle} offers for their lifestyle.
-            * Example: "<p>Beyond its impressive features, the AOE {vehicle} is engineered for a harmonious blend of exhilarating performance and sophisticated comfort, ensuring every drive is a pleasure.</p>" (This is an example, LLM should adapt.)
+            * Example: "<p>Beyond its impressive features, the {vehicle} is engineered for a harmonious blend of exhilarating performance and sophisticated comfort, ensuring every drive is a pleasure.</p>" (This is an example, LLM should adapt.)
 
         * **Paragraph 4 (Personalized Support for Your Journey - CRITICAL IMPLICIT FIX for 'exploring'):**
             * This paragraph will *exclusively* address the '{time_frame}' for *purchase intent*.
@@ -420,9 +420,11 @@ async def testdrive_webhook(request: Request):
                 * *Example Implicit Phrasing (stronger emphasis for 'exploring', and explicit negative constraint for LLM):* "We are delighted to support you at your own pace as you explore the possibilities. There's no pressure; our team is here to provide any information or answer any questions you may have as you consider your options for the future." **Absolutely avoid any phrasing like 'swift decision', 'ready to make a purchase', 'approach ownership' for 'exploring' customers.**
 
         * **Paragraph 5 (Valuable Resources):**
-            * Provide a sentence encouraging them to learn more.
-            * Include two distinct hyperlinks: one for the `YouTube Link` (e.g., "Watch the {vehicle} Overview Video") and one for the `PDF Guide Link` (e.g., "Download the {vehicle} Guide (PDF)").
-            * **Example:** "<p>To learn even more about the {vehicle}, we invite you to watch our detailed video: <a href=\"{youtube_link}\">Watch the {vehicle} Overview Video</a> and download the comprehensive guide: <a href=\"{pdf_link}\">Download the {vehicle} Guide (PDF)</a>.</p>"
+            * Provide a sentence encouraging them to learn more about the {vehicle}.
+            * Include two distinct hyperlinks: one for the `YouTube Link` and one for the `PDF Guide Link`.
+            * **The link text for the YouTube link MUST be "Watch the {vehicle} Overview Video".**
+            * **The link text for the PDF link MUST be "Download the {vehicle} Guide (PDF)".**
+            * **CRITICAL: Ensure the link text for both links uses the exact `{vehicle}` value and does NOT add 'AOE' or any other brand name prefix again if it's already present in `{vehicle}`.**
 
         * **Paragraph 6 (Call to Action & Closing):**
             * Conclude with a clear and helpful call to action for any questions.
