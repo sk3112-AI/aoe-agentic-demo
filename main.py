@@ -16,6 +16,7 @@ import sys
 from openai import OpenAI
 import uuid
 from supabase import create_client, Client
+import urllib.parse # ADDED: For URL encoding tracking links
 
 # Load environment variables (keep this for local development, Render handles env vars directly)
 load_dotenv()
@@ -79,6 +80,12 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", 465)) # Default to 465 for SSL
 
 # Team Email for notifications
 TEAM_EMAIL = os.getenv("TEAM_EMAIL")
+
+# ADDED: Tracking URL from environment variables
+TRACKING_URL = os.getenv("TRACKING_URL")
+if not TRACKING_URL:
+    logging.warning("TRACKING_URL environment variable is not set. Email open/click tracking will be disabled.")
+
 
 # OpenAI Client setup
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -281,7 +288,7 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = request_body.customer_email
         msg_customer["Subject"] = generated_subject
-        msg_customer.attach(MIMEText(generated_body, "html"))
+        msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
 
         with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
             logging.debug(f"Attempting to connect to SMTP server for follow-up email: {EMAIL_HOST}:{EMAIL_PORT}")
@@ -340,8 +347,32 @@ async def testdrive_webhook(request: Request):
 
         # Get resource links
         resources = get_vehicle_resources(vehicle)
-        youtube_link = resources["youtube_link"]
-        pdf_link = resources["pdf_link"]
+        # Original links - these are now used to construct tracking links
+        original_youtube_link = resources["youtube_link"]
+        original_pdf_link = resources["pdf_link"]
+
+        # --- Tracking Setup (ADDED) ---
+        # Ensure TRACKING_URL is imported/defined globally and holds the Edge Function URL
+        # For simplicity in this block, assuming TRACKING_URL is accessible here
+        # If not already done, add TRACKING_URL = os.getenv("TRACKING_URL") at the global email config section.
+        tracking_pixel_html = ""
+        trackable_youtube_link = original_youtube_link # Default to original if no tracking
+        trackable_pdf_link = original_pdf_link # Default to original if no tracking
+
+        if TRACKING_URL:
+            # URL-encode the original links for the redirect_to parameter
+            encoded_youtube_link = urllib.parse.quote_plus(original_youtube_link)
+            encoded_pdf_link = urllib.parse.quote_plus(original_pdf_link)
+
+            # Create tracking URLs using the Edge Function endpoint
+            trackable_youtube_link = f"{TRACKING_URL}?request_id={request_id}&event_type=clicked_video&redirect_to={encoded_youtube_link}"
+            trackable_pdf_link = f"{TRACKING_URL}?request_id={request_id}&event_type=clicked_pdf&redirect_to={encoded_pdf_link}"
+
+            # Tracking pixel HTML, hidden
+            tracking_pixel_html = f'<img src="{TRACKING_URL}?request_id={request_id}&event_type=opened" width="1" height="1" style="display:none;">'
+        else:
+            logging.warning("TRACKING_URL is not set, email open/click tracking will not be active for this email.")
+        # --- END Tracking Setup ---
 
 
         # --- AI Email Generation (Customer) ---
@@ -362,8 +393,8 @@ async def testdrive_webhook(request: Request):
         - {chosen_aoe_features}
 
         **Additional Resources:**
-        - YouTube Link: {youtube_link}
-        - PDF Link: {pdf_link}
+        - YouTube Link: {trackable_youtube_link} # Now using trackable link
+        - PDF Link: {trackable_pdf_link} # Now using trackable link
 
         **Email Instructions:**
         - Start with a polite greeting.
@@ -417,14 +448,14 @@ async def testdrive_webhook(request: Request):
             * If `time_frame` is '3-6-months' or '6-12-months': Focus on offering continued guidance and resources throughout their decision-making journey, highlighting that you're ready to assist them when they're closer to a purchase decision, providing resources for further exploration.
                 * *Example Implicit Phrasing:* "As you carefully consider your options over the coming months, we are committed to providing comprehensive support and insights to help you make an informed choice."
             * If `time_frame` is 'exploring': Maintain a welcoming, low-pressure tone, focusing purely on discovery and making the experience informative and enjoyable for their future consideration, without any hint of urgency or swift decisions. The goal is to provide resources and be available for questions at their pace.
-                * *Example Implicit Phrasing (stronger emphasis for 'exploring', and explicit negative constraint for LLM):* "We are delighted to support you at your own pace as you explore the possibilities. There's no pressure; our team is here to provide any information or answer any questions you may have as you consider your options for the future." **Absolutely avoid any phrasing like 'swift decision', 'ready to make a purchase', 'approach ownership' for 'exploring' customers.**
+                * *Example Implicit Phrasing (stronger emphasis for 'exploring', and explicit negative constraint for LLM):* "We are delighted to support you at your own pace as you explore the possibilities. There's no pressure; our team is here to provide any information or answer any questions you may have as you consider your options for the future." **Absolutely avoid any phrasing like 'swift decision', 'ready to make a purchase', 'approach ownership', 'your purchase decision' for 'exploring' customers.**
 
         * **Paragraph 5 (Valuable Resources):**
             * **MUST generate a sentence encouraging them to learn more about the {vehicle}. Then, immediately follow with TWO distinct HTML hyperlinks.**
-            * **The first hyperlink MUST be for the YouTube Link (`{youtube_link}`). Its link text MUST be "Watch the {vehicle} Overview Video".**
-            * **The second hyperlink MUST be for the PDF Guide Link (`{pdf_link}`). Its link text MUST be "Download the {vehicle} Guide (PDF)".**
+            * **The first hyperlink MUST be for the YouTube Link (`{trackable_youtube_link}`). Its link text MUST be "Watch the {vehicle} Overview Video".**
+            * **The second hyperlink MUST be for the PDF Guide Link (`{trackable_pdf_link}`). Its link text MUST be "Download the {vehicle} Guide (PDF)".**
             * **CRITICAL: Ensure the link text for both links uses the exact `{vehicle}` value and does NOT add 'AOE' or any other brand name prefix again if it's already present in `{vehicle}`.**
-            * **YOU MUST FOLLOW THIS HTML STRUCTURE for the entire paragraph:** `<p>To learn even more about the {vehicle}, we invite you to watch our detailed video and download the comprehensive guide: <a href="{youtube_link}">Watch the {vehicle} Overview Video</a> <a href="{pdf_link}">Download the {vehicle} Guide (PDF)</a></p>`
+            * **YOU MUST FOLLOW THIS HTML STRUCTURE for the entire paragraph:** `<p>To learn even more about the {vehicle}, we invite you to watch our detailed video and download the comprehensive guide: <a href="{trackable_youtube_link}">Watch the {vehicle} Overview Video</a> <a href="{trackable_pdf_link}">Download the {vehicle} Guide (PDF)</a></p>`
 
         * **Paragraph 6 (Call to Action & Closing):**
             * **MUST generate a clear and helpful call to action for any questions. Immediately follow with an expression of eagerness for their visit.**
@@ -468,7 +499,8 @@ async def testdrive_webhook(request: Request):
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = email
         msg_customer["Subject"] = generated_subject
-        msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
+        msg_customer.attach(MIMEText(generated_body + tracking_pixel_html, "html")) # APPEND TRACKING PIXEL HERE
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ADDED
 
         with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
             logging.debug(f"Attempting to connect to SMTP server for customer email: {EMAIL_HOST}:{EMAIL_PORT}")
@@ -564,7 +596,6 @@ async def testdrive_webhook(request: Request):
         except Exception as e:
             logging.error(f"❌ Error saving booking data to Supabase for request_id {request_id}: {e}", exc_info=True)
             # Decide if this should be a critical failure for the webhook or just logged
-            # For now, it will return success if emails are sent, but log DB failure
 
         return {"status": "success", "message": "Test drive request processed successfully and emails sent."}
 
