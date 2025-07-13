@@ -423,7 +423,7 @@ async def testdrive_webhook(request: Request):
             * **Pattern A: If `current_vehicle` is provided (and NOT 'No-vehicle' or 'exploring'):**
                 * **YOU MUST start this paragraph by subtly positioning the {vehicle} as a significant, transformative upgrade compared to their current vehicle.**
                 * **From the provided {chosen_aoe_features}, select 2-3 MOST EXCITING and UNIQUE features of the {vehicle} that highlight this upgrade.**
-                * **Translate any technical jargon into clear, simple benefits for the driver. AVOID using technical jargon directly if a simpler benefit can be stated.**
+                * **Translate technical jargon into clear, simple benefits for the driver. AVOID using technical jargon directly if a simpler benefit can be stated.**
                 * **Example:** "<p>As a {current_vehicle} owner, prepare to experience the next level of automotive innovation with the {vehicle} {vehicle_type}. Its [GENERATE 2-3 KEY FEATURES AND THEIR BENEFITS HERE, translating technical terms into clear, simple benefits for the driver, e.g., 'luxurious interior comfort and cutting-edge safety systems'] offer a remarkable {powertrain_type} driving experience that truly elevates beyond what you're accustomed to.</p>"
                 * **Crucial:** Ensure this comparison is subtle and positive.
 
@@ -478,20 +478,29 @@ async def testdrive_webhook(request: Request):
 
         # --- Rule-Based Lead Scoring ---
         logging.info(f"Applying rule-based lead scoring for {email}...")
-        lead_score = "Cold" # Default to Cold
-
+        
+        initial_numeric_score = 0
         if time_frame == "0-3-months":
-            lead_score = "Hot"
-        elif time_frame == "3-6-months": # Interpreting "near to hot" as Warm
-            lead_score = "Warm"
+            initial_numeric_score = 10
+        elif time_frame == "3-6-months":
+            initial_numeric_score = 7
         elif time_frame == "6-12-months":
-            lead_score = "Warm"
+            initial_numeric_score = 5
         elif time_frame == "exploring":
-            lead_score = "Cold"
-        logging.info(f"Rule-based Lead Score for {email}: '{lead_score}'")
+            initial_numeric_score = 2
+        
+        # Determine initial text lead_score based on numeric score
+        if initial_numeric_score >= 10:
+            lead_score_text = "Hot"
+        elif initial_numeric_score >= 5:
+            lead_score_text = "Warm"
+        else:
+            lead_score_text = "Cold"
+
+        logging.info(f"Initial Numeric Lead Score for {email}: '{initial_numeric_score}', Text Status: '{lead_score_text}'")
 
 
-        # --- Email Sending to Customer ---
+        # --- Email Sending to Customer (rest of this section remains the same) ---
         generated_subject = f"AOE Test Drive Confirmed! Get Ready for Your {vehicle} Experience"
         if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
             raise ValueError("One or more email configuration environment variables are missing or empty.")
@@ -507,7 +516,7 @@ async def testdrive_webhook(request: Request):
             logging.debug(f"Attempting to connect to SMTP server for customer email: {EMAIL_HOST}:{EMAIL_PORT}")
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg_customer)
-            logging.info(f"✅ Customer email successfully sent to {email} (Subject: '{generated_subject}', Score: '{lead_score}').")
+            logging.info(f"✅ Customer email successfully sent to {email} (Subject: '{generated_subject}', Score: '{lead_score_text}').")
 
         # --- Email Sending to Team ---
         if TEAM_EMAIL and EMAIL_ADDRESS and EMAIL_PASSWORD: # Ensure TEAM_EMAIL is configured
@@ -526,7 +535,8 @@ async def testdrive_webhook(request: Request):
             - Location: {location}
             - Current Vehicle: {current_vehicle}
             - Time Frame: {time_frame}
-            - **Lead Score: {lead_score}**
+            - **Lead Score: {lead_score_text}**
+            - **Numeric Lead Score: {initial_numeric_score}**
 
             ---
             **Email Content Sent to Customer:**
@@ -551,7 +561,8 @@ async def testdrive_webhook(request: Request):
                 location=location,
                 current_vehicle=current_vehicle,
                 time_frame=time_frame,
-                lead_score=lead_score,
+                lead_score_text=lead_score_text,  # Use lead_score_text here
+                initial_numeric_score=initial_numeric_score, # Pass numeric score
                 generated_subject=generated_subject,
                 EMAIL_ADDRESS=EMAIL_ADDRESS,
                 generated_body=generated_body
@@ -577,26 +588,25 @@ async def testdrive_webhook(request: Request):
                 "full_name": full_name,
                 "email": email,
                 "vehicle": vehicle,
-                "booking_date": date, # Store asYYYY-MM-DD
+                "booking_date": date, 
                 "location": location,
                 "current_vehicle": current_vehicle,
                 "time_frame": time_frame,
                 "generated_subject": generated_subject,
                 "generated_body": generated_body,
-                "lead_score": lead_score,
-                "booking_timestamp": datetime.now().isoformat(), # ISO format for Supabase datetime
-                "action_status": 'New Lead', # Default
-                "sales_notes": '' # Default empty
+                "lead_score": lead_score_text,  # Save text score
+                "numeric_lead_score": initial_numeric_score, # Save numeric score
+                "booking_timestamp": datetime.now().isoformat(), 
+                "action_status": 'New Lead', 
+                "sales_notes": '' 
             }
             response = supabase.from_(SUPABASE_TABLE_NAME).insert(booking_data).execute()
             if response.data:
                 logging.info(f"✅ Booking data successfully saved to Supabase (request_id: {request_id}).")
             else:
                 logging.error(f"❌ Failed to save booking data to Supabase for request_id {request_id}. Response: {response}")
-                # You might choose to raise an HTTPException here if DB save is critical
         except Exception as e:
             logging.error(f"❌ Error saving booking data to Supabase for request_id {request_id}: {e}", exc_info=True)
-            # Decide if this should be a critical failure for the webhook or just logged
 
         return {"status": "success", "message": "Test drive request processed successfully and emails sent."}
 
