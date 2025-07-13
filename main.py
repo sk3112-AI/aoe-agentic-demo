@@ -190,10 +190,10 @@ async def update_booking(request_body: UpdateBookingRequest):
             logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
             return {"status": "success", "message": "Booking updated successfully."}
         else:
-            logging.error(f"❌ Failed to update booking {request_body.request_id}. Response: {response}")
+            logging.error(f"❌ Failed to update booking {request_id}. Response: {response}")
             raise HTTPException(status_code=500, detail="Failed to update booking.")
     except Exception as e:
-        logging.error(f"🚨 Error updating booking {request_body.request_id}: {e}", exc_info=True)
+        logging.error(f"🚨 Error updating booking {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
 # NEW ENDPOINT 2: Draft and Send Follow-up Email
@@ -242,6 +242,7 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
             * **DO NOT use `\\n\\n` for spacing; the `<p>` tags provide the necessary visual separation.**
             * **DO NOT include any section dividers (like '---').**
             * **Ensure there is no extra blank space before the first `<p>` tag or after the last `</p>` tag.**
+            * **Output the email body in valid HTML format.**
 
         **Content Structure & Logic (Each point should be a distinct HTML paragraph):**
 
