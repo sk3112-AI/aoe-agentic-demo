@@ -486,7 +486,7 @@ async def testdrive_webhook(request: Request):
             initial_numeric_score = 7
         elif time_frame == "6-12-months":
             initial_numeric_score = 5
-        elif time_frame == "exploring":
+        elif time_frame == "exploring-now": # CORRECTED: Changed from "exploring" to "exploring-now"
             initial_numeric_score = 2
         
         # Determine initial text lead_score based on numeric score
