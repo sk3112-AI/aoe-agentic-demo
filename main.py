@@ -285,11 +285,11 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
         if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
             raise ValueError("One or more email configuration environment variables are missing or empty.")
 
-        msg_customer = MIMEMultipart()
+        msg_customer = MIMEMultipart("alternative")
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = request_body.customer_email
         msg_customer["Subject"] = generated_subject
-        msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
+        msg_customer.add_header("Reply-To", f"aoereplies+{request_id}@gmail.com")
         msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
 
         with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
@@ -506,11 +506,11 @@ async def testdrive_webhook(request: Request):
         if not all([EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD]):
             raise ValueError("One or more email configuration environment variables are missing or empty.")
 
-        msg_customer = MIMEMultipart()
+        msg_customer = MIMEMultipart("alternative")
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = email
         msg_customer["Subject"] = generated_subject
-        msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
+        msg_customer.add_header("Reply-To", f"aoereplies+{request_id}@gmail.com")
         msg_customer.attach(MIMEText(generated_body + tracking_pixel_html, "html")) # APPEND TRACKING PIXEL HERE
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ADDED
 
@@ -573,7 +573,6 @@ async def testdrive_webhook(request: Request):
             msg_team["From"] = EMAIL_ADDRESS
             msg_team["To"] = TEAM_EMAIL
             msg_team["Subject"] = team_subject
-            msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
             msg_team.attach(MIMEText(team_body, "plain")) # Plain text for internal clarity
 
             with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
