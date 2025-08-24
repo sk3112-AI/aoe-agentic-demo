@@ -289,6 +289,7 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = request_body.customer_email
         msg_customer["Subject"] = generated_subject
+        msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
         msg_customer.attach(MIMEText(generated_body, "html")) # Explicitly using 'html' to interpret <p> tags
 
         with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
@@ -509,6 +510,7 @@ async def testdrive_webhook(request: Request):
         msg_customer["From"] = EMAIL_ADDRESS
         msg_customer["To"] = email
         msg_customer["Subject"] = generated_subject
+        msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
         msg_customer.attach(MIMEText(generated_body + tracking_pixel_html, "html")) # APPEND TRACKING PIXEL HERE
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ADDED
 
@@ -571,6 +573,7 @@ async def testdrive_webhook(request: Request):
             msg_team["From"] = EMAIL_ADDRESS
             msg_team["To"] = TEAM_EMAIL
             msg_team["Subject"] = team_subject
+            msg["Reply-To"] = f"aoereplies+{request_id}@gmail.com"
             msg_team.attach(MIMEText(team_body, "plain")) # Plain text for internal clarity
 
             with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT) as server:
