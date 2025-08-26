@@ -171,8 +171,13 @@ async def get_vehicles_data():
 # NEW ENDPOINT 1: Update Booking Status and Sales Notes
 class UpdateBookingRequest(BaseModel):
     request_id: str
-    action_status: str
-    sales_notes: str = None # Optional, can be empty
+    action_status: Optional[str] = None
+    sales_notes: Optional[str] = None
+    # NEW:
+    numeric_lead_score: Optional[int] = None
+    lead_score: Optional[str] = None   # text label (Hot/Warm/Cold); backend can auto-derive if omitted
+    # (optional, if you want snooze metadata later)
+    wait_until: Optional[str] = None   # ISO 8601 string, e.g. "2025-09-10T10:00:00Z"
 
 @app.post("/update-booking")
 async def update_booking(request_body: UpdateBookingRequest):
@@ -180,21 +185,41 @@ async def update_booking(request_body: UpdateBookingRequest):
     Endpoint to update a booking's action_status and sales_notes in Supabase.
     """
     try:
-        update_data = {
-            "action_status": request_body.action_status,
-            "sales_notes": request_body.sales_notes
-        }
-        response = supabase.from_(SUPABASE_TABLE_NAME).update(update_data).eq('request_id', request_body.request_id).execute()
+        update_data = {}
+        if request_body.action_status is not None:
+            update_data["action_status"] = request_body.action_status
 
-        if response.data:
-            logging.info(f"✅ Booking {request_body.request_id} updated successfully.")
-            return {"status": "success", "message": "Booking updated successfully."}
-        else:
-            logging.error(f"❌ Failed to update booking {request_id}. Response: {response}")
-            raise HTTPException(status_code=500, detail="Failed to update booking.")
+        if request_body.sales_notes is not None:
+            update_data["sales_notes"] = request_body.sales_notes
+
+        if request_body.numeric_lead_score is not None:
+            n = request_body.numeric_lead_score
+            update_data["numeric_lead_score"] = n
+            # If caller didn’t send the label, derive it with your existing thresholds
+        if request_body.lead_score is None:
+            update_data["lead_score"] = "Hot" if n >= 10 else ("Warm" if n >= 5 else "Cold")
+
+        # If caller sent an explicit text label, honor it
+        if request_body.lead_score is not None:
+            update_data["lead_score"] = request_body.lead_score
+
+        # Optional snooze timestamp (for future use)
+        if request_body.wait_until is not None:
+            update_data["wait_until"] = request_body.wait_until
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No updatable fields provided.")
+
+        resp = supabase.from_(SUPABASE_TABLE_NAME).update(update_data).eq("request_id", request_body.request_id).execute()
+
+        if resp.data:
+            logging.info(f"Updated {request_body.request_id}: {update_data}")
+            return {"status": "success", "data": resp.data}
+        raise HTTPException(status_code=500, detail="Failed to update booking.")
     except Exception as e:
-        logging.error(f"🚨 Error updating booking {request_id}: {e}", exc_info=True)
+        logging.error(f"Error updating booking {request_body.request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+           
 
 # NEW ENDPOINT 2: Draft and Send Follow-up Email
 class DraftAndSendEmailRequest(BaseModel):
