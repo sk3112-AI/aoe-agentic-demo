@@ -19,6 +19,10 @@ import uuid
 from supabase import create_client, Client
 import urllib.parse # ADDED: For URL encoding tracking links
 
+# --- Lead score helper (single source of truth) ---
+def _label_from_numeric(score: int) -> str:
+    return "Hot" if score >= 10 else ("Warm" if score >= 5 else "Cold")
+
 # Load environment variables (keep this for local development, Render handles env vars directly)
 load_dotenv()
 
@@ -517,12 +521,7 @@ async def testdrive_webhook(request: Request):
             initial_numeric_score = 2
         
         # Determine initial text lead_score based on numeric score
-        if initial_numeric_score >= 10:
-            lead_score_text = "Hot"
-        elif initial_numeric_score >= 5:
-            lead_score_text = "Warm"
-        else:
-            lead_score_text = "Cold"
+        lead_score_text = _label_from_numeric(initial_numeric_score)
 
         logging.info(f"Initial Numeric Lead Score for {email}: '{initial_numeric_score}', Text Status: '{lead_score_text}'")
 
