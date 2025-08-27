@@ -198,7 +198,7 @@ async def update_booking(request_body: UpdateBookingRequest):
             update_data["numeric_lead_score"] = n
             # If caller didn’t send the label, derive it with your existing thresholds
         if request_body.lead_score is None:
-            update_data["lead_score"] = "Hot" if n >= 10 else ("Warm" if n >= 5 else "Cold")
+            update_data["lead_score"] = _label_from_numeric(n)
 
         # If caller sent an explicit text label, honor it
         if request_body.lead_score is not None:
