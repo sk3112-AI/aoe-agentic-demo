@@ -18,6 +18,9 @@ from openai import OpenAI
 import uuid
 from supabase import create_client, Client
 import urllib.parse # ADDED: For URL encoding tracking links
+import os, re, hmac, hashlib, json, time, base64
+from datetime import datetime, timedelta, timezone
+import httpx
 
 # --- Lead score helper (single source of truth) ---
 def _label_from_numeric(score: int) -> str:
@@ -41,6 +44,19 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 SUPABASE_TABLE_NAME = "bookings" # Ensure this matches your table name in Supabase
+
+WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "")
+WA_APP_SECRET        = os.getenv("WA_APP_SECRET", "")
+WA_PHONE_NUMBER_ID   = os.getenv("WA_PHONE_NUMBER_ID", "")
+WA_TOKEN             = os.getenv("WA_TOKEN", "")
+TRACKING_SIGNING_KEY = os.getenv("TRACKING_SIGNING_KEY", "")
+TRACKING_BASE_URL    = os.getenv("TRACKING_BASE_URL", "").rstrip("/") + "/"
+WA_USE_TEMPLATE      = os.getenv("WA_USE_TEMPLATE", "false").lower() == "true"
+WA_TEMPLATE_NAME     = os.getenv("WA_TEMPLATE_NAME", "bind_request_v1")
+WA_TEMPLATE_LANG     = os.getenv("WA_TEMPLATE_LANG", "en")
+
+GRAPH_SEND_URL = f"https://graph.facebook.com/v24.0/{WA_PHONE_NUMBER_ID}/messages"
+E164 = re.compile(r"^\+\d{7,15}$")
 
 # --- HARDCODED VEHICLE DATA ---
 # This dictionary replaces the web scraping logic for vehicle data.
@@ -146,6 +162,120 @@ app.add_middleware(
     allow_headers=["*"], # Allows all headers
 )
 
+# -------------------- Supabase helpers (generic) --------------------
+def _sb_hdr(json_body=False):
+    h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    if json_body:
+        h["Content-Type"] = "application/json"
+    return h
+
+async def sb_select_one(table: str, eq: dict, select: str="*") -> Optional[dict]:
+    qs = "&".join([f"{k}=eq.{v}" for k, v in eq.items()])
+    url = f"{SUPABASE_URL}/rest/v1/{table}?{qs}&select={select}&limit=1"
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(url, headers=_sb_hdr())
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    data = r.json()
+    return data[0] if data else None
+
+async def sb_insert(table: str, row: dict):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(url, headers={**_sb_hdr(True), "Prefer":"return=representation"}, json=row)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    return r.json()
+
+async def sb_upsert(table: str, row: dict, conflict: str):
+    url = f"{SUPABASE_URL}/rest/v1/{table}?on_conflict={conflict}"
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(url, headers={**_sb_hdr(True),"Prefer":"resolution=merge-duplicates,return=representation"}, json=row)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    return r.json()
+
+# -------------------- utils --------------------
+def to_e164(raw: str | None) -> Optional[str]:
+    if not raw:
+        return None
+    d = re.sub(r"[^\d+]", "", raw)
+    if not d.startswith("+"):
+        d = "+" + re.sub(r"[^\d]", "", d)
+    if not E164.match(d):
+        return None
+    return d
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+def _u64(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def make_token(payload: dict) -> str:
+    body = json.dumps(payload, separators=(",",":"), ensure_ascii=False).encode()
+    sig  = hmac.new(TRACKING_SIGNING_KEY.encode(), body, hashlib.sha256).digest()
+    return f"{_b64u(body)}.{_b64u(sig)}"
+
+def verify_token(token: str) -> dict:
+    b64, s64 = token.split(".", 1)
+    body, sig = _u64(b64), _u64(s64)
+    good = hmac.new(TRACKING_SIGNING_KEY.encode(), body, hashlib.sha256).digest()
+    if not hmac.compare_digest(sig, good):
+        raise ValueError("bad signature")
+    data = json.loads(body)
+    if "exp" in data and int(time.time()) > int(data["exp"]):
+        raise ValueError("expired")
+    return data
+
+# -------------------- WA send helpers --------------------
+async def wa_send_text(wa_id: str, text: str) -> str:
+    payload = {"messaging_product":"whatsapp","to":wa_id,"type":"text","text":{"body":text[:4096]}}
+    headers = {"Authorization": f"Bearer {WA_TOKEN}","Content-Type":"application/json"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(GRAPH_SEND_URL, headers=headers, json=payload)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    return (r.json().get("messages") or [{}])[0].get("id") or ""
+
+async def wa_send_session_button(wa_id: str, text: str) -> str:
+    payload = {
+        "messaging_product":"whatsapp","to":wa_id,"type":"interactive",
+        "interactive":{"type":"button","body":{"text":text[:1024]},
+            "action":{"buttons":[{"type":"reply","reply":{"id":"bind_now","title":"Reply"}}]}}
+    }
+    headers = {"Authorization": f"Bearer {WA_TOKEN}","Content-Type":"application/json"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(GRAPH_SEND_URL, headers=headers, json=payload)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    return (r.json().get("messages") or [{}])[0].get("id") or ""
+
+async def wa_send_template_bind(wa_id: str, name: str|None, vehicle: str|None, date: str|None) -> str:
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": wa_id,
+        "type": "template",
+        "template": {
+            "name": WA_TEMPLATE_NAME,
+            "language": {"code": WA_TEMPLATE_LANG},
+            "components": [{
+                "type": "body",
+                "parameters": [
+                    {"type":"text","text": name or "there"},
+                    {"type":"text","text": vehicle or "your request"},
+                    {"type":"text","text": date or ""}
+                ]
+            }]
+        }
+    }
+    headers = {"Authorization": f"Bearer {WA_TOKEN}","Content-Type":"application/json"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(GRAPH_SEND_URL, headers=headers, json=payload)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    return (r.json().get("messages") or [{}])[0].get("id") or ""
+
 # --- DEBUG LOGGING ENDPOINT ---
 @app.get("/debug-logs")
 async def get_debug_logs():
@@ -244,6 +374,7 @@ async def wa_verify(
     if mode == "subscribe" and verify_token == os.getenv("WEBHOOK_VERIFY_TOKEN", ""):
         return Response(content=challenge or "", media_type="text/plain")
     return Response(content="forbidden", status_code=403)
+
 
 @app.post("/draft-and-send-followup-email")
 async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
@@ -344,7 +475,162 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
     except Exception as e:
         logging.error(f"🚨 An unexpected error occurred during follow-up email processing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+# -------------------- Webhook: POST (events) --------------------
+@app.post("/wa/webhook")
+async def wa_events(request: Request):
+    raw = await request.body()
+    sig = request.headers.get("X-Hub-Signature-256","")
+    if WA_APP_SECRET:
+        digest = hmac.new(WA_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, f"sha256={digest}"):
+            raise HTTPException(status_code=401, detail="bad signature")
 
+    payload = await request.json()
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            v = change.get("value", {})
+
+            # Message statuses are also inside value; optional to log
+            for m in v.get("messages", []) or []:
+                mtype = m.get("type")
+                from_ = m.get("from")
+                wa_id  = f"+{from_}" if from_ and not str(from_).startswith("+") else from_
+                mid    = m.get("id")
+
+                # A) Interactive reply (button) -> bind
+                if mtype in ("interactive","button"):
+                    ctx_id = (m.get("context") or {}).get("id")
+                    rid = None
+                    if ctx_id:
+                        row = await sb_select_one("wa_outbound_log", {"message_id": ctx_id}, select="request_id")
+                        if row:
+                            rid = row["request_id"]
+
+                    if rid and wa_id:
+                        now = datetime.now(timezone.utc)
+                        exp = now + timedelta(hours=48)
+                        await sb_upsert("wa_request_links", {
+                            "wa_id": wa_id, "request_id": rid, "active": True,
+                            "bound_at": now.isoformat(), "expires_at": exp.isoformat(),
+                            "bound_via": "button"
+                        }, conflict="wa_id")
+
+                        # Confirmation
+                        text = "Thanks! I’ve linked this WhatsApp chat to your request. I’ll follow up here."
+                        out_id = await wa_send_text(wa_id, text)
+
+                        await sb_insert("wa_messages", {
+                            "message_id": mid, "request_id": rid, "wa_id": wa_id,
+                            "direction": "inbound",
+                            "body_text": (m.get("interactive") or {}).get("button_reply", {}).get("title") or "Reply"
+                        })
+                        if out_id:
+                            await sb_insert("wa_messages", {
+                                "message_id": out_id, "request_id": rid, "wa_id": wa_id,
+                                "direction": "outbound", "body_text": text
+                            })
+                    else:
+                        await sb_insert("wa_messages", {
+                            "message_id": mid, "request_id": None, "wa_id": wa_id,
+                            "direction": "inbound", "body_text": "Reply (unmapped)"
+                        })
+                    continue
+
+                # B) Inbound text -> log (and later forward to n8n)
+                if mtype == "text":
+                    txt = (m.get("text") or {}).get("body", "")
+                    bind = await sb_select_one("wa_request_links", {"wa_id": wa_id}, select="request_id")
+                    rid = bind["request_id"] if bind else None
+                    await sb_insert("wa_messages", {
+                        "message_id": mid, "request_id": rid, "wa_id": wa_id,
+                        "direction": "inbound", "body_text": txt
+                    })
+    return {"ok": True}
+
+# -------------------- Start session message (manual wa_id) --------------------
+class SessionKickoff(BaseModel):
+    request_id: str
+    wa_id: str
+    name: str | None = None
+    vehicle: str | None = None
+    date: str | None = None
+
+@app.post("/wa/session_start")
+async def wa_session_start(p: SessionKickoff):
+    if not E164.match(p.wa_id):
+        raise HTTPException(status_code=400, detail="wa_id must be E.164 (+country...)")
+    text = f"Hi {p.name or 'there'} — re: {p.vehicle or 'your request'}" + (f" on {p.date}" if p.date else "") + ". Tap Reply to continue here."
+    if WA_USE_TEMPLATE:
+        msg_id = await wa_send_template_bind(p.wa_id, p.name, p.vehicle, p.date)
+        marker = WA_TEMPLATE_NAME
+    else:
+        msg_id = await wa_send_session_button(p.wa_id, text)
+        marker = "session_button"
+
+    await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": p.wa_id, "request_id": p.request_id, "template_name": marker})
+    await sb_insert("wa_messages", {"message_id": msg_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
+    return {"ok": True, "message_id": msg_id}
+
+# -------------------- Start session by request_id (reads phone from BOOKINGS) --------------------
+@app.post("/wa/session_start_by_rid")
+async def wa_session_start_by_rid(payload: dict):
+    rid = payload.get("request_id")
+    if not rid:
+        raise HTTPException(status_code=400, detail="request_id required")
+
+    # *** HERE we use SUPABASE_TABLE_NAME instead of hard-coded 'bookings' ***
+    row = await sb_select_one(SUPABASE_TABLE_NAME, {"request_id": rid}, select="request_id, full_name, phone, vehicle, booking_date")
+    if not row:
+        raise HTTPException(status_code=404, detail="booking not found")
+
+    wa_id = to_e164(row.get("phone"))
+    if not wa_id:
+        raise HTTPException(status_code=400, detail="no usable phone for this request")
+
+    name, vehicle = row.get("full_name"), row.get("vehicle")
+    date = row.get("booking_date") or ""
+    text = f"Hi {name or 'there'} — re: {vehicle or 'your request'}" + (f" on {date}" if date else "") + ". Tap Reply to continue here."
+
+    if WA_USE_TEMPLATE:
+        msg_id = await wa_send_template_bind(wa_id, name, vehicle, date)
+        marker = WA_TEMPLATE_NAME
+    else:
+        msg_id = await wa_send_session_button(wa_id, text)
+        marker = "session_button"
+
+    await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": wa_id, "request_id": rid, "template_name": marker})
+    await sb_insert("wa_messages", {"message_id": msg_id, "request_id": rid, "wa_id": wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
+    return {"ok": True, "message_id": msg_id, "wa_id": wa_id}
+
+# -------------------- Generic send text (for n8n) --------------------
+class SendTextPayload(BaseModel):
+    request_id: Optional[str] = None
+    wa_id: str
+    text: str
+
+@app.post("/wa/send_text")
+async def api_send_text(p: SendTextPayload):
+    if not E164.match(p.wa_id):
+        raise HTTPException(status_code=400, detail="wa_id must be E.164")
+    out_id = await wa_send_text(p.wa_id, p.text)
+    await sb_insert("wa_messages", {"message_id": out_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": p.text})
+    return {"ok": True, "message_id": out_id}
+
+# -------------------- Tracked-link redirect --------------------
+@app.get("/t/{token}")
+async def track_and_redirect(token: str):
+    try:
+        data = verify_token(token)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        await sb_insert("link_clicks", {"token": token, "request_id": data.get("rid"), "wa_id": data.get("wa_id")})
+    except Exception:
+        pass
+    url = data.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="no url")
+    return Response(status_code=302, headers={"Location": url})
 # ORIGINAL WEBHOOK ENDPOINT: Process incoming test drive requests
 @app.post("/webhook/testdrive")
 async def testdrive_webhook(request: Request):
