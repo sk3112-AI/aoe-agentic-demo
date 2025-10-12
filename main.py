@@ -21,6 +21,7 @@ import urllib.parse # ADDED: For URL encoding tracking links
 import os, re, hmac, hashlib, json, time, base64
 from datetime import datetime, timedelta, timezone
 import httpx
+import asyncio
 
 # --- Lead score helper (single source of truth) ---
 def _label_from_numeric(score: int) -> str:
@@ -196,15 +197,15 @@ async def sb_upsert(table: str, row: dict, conflict: str):
     return r.json()
 
 # -------------------- utils --------------------
-def to_e164(raw: str | None) -> Optional[str]:
-    if not raw:
-        return None
-    d = re.sub(r"[^\d+]", "", raw)
-    if not d.startswith("+"):
-        d = "+" + re.sub(r"[^\d]", "", d)
-    if not E164.match(d):
-        return None
-    return d
+import re
+E164_RE = re.compile(r"^\+\d{7,15}$")
+
+def to_e164(raw: str | None) -> str | None:
+    if not raw: return None
+    digits = re.sub(r"[^\d+]", "", raw)
+    if not digits.startswith("+"):
+        digits = "+" + re.sub(r"[^\d]", "", digits)
+    return digits if E164_RE.match(digits) else None
 
 def _b64u(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode().rstrip("=")
@@ -275,6 +276,14 @@ async def wa_send_template_bind(wa_id: str, name: str|None, vehicle: str|None, d
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail=r.text)
     return (r.json().get("messages") or [{}])[0].get("id") or ""
+
+async def _kick_wa_session(rid: str):
+    try:
+        # Call the same logic your route uses
+        await wa_session_start_by_rid({"request_id": rid})
+    except Exception as e:
+        logging.exception("WA kickoff failed for %s: %s", rid, e)
+
 
 # --- DEBUG LOGGING ENDPOINT ---
 @app.get("/debug-logs")
@@ -650,6 +659,8 @@ async def testdrive_webhook(request: Request):
         location = data.get("location")
         current_vehicle = data.get("currentVehicle")
         time_frame = data.get("timeFrame")
+        phone_raw = data.get("phone")  # e.g. "+919876543210"
+        phone_e164 = to_e164(phone_raw)
 
         if not all([full_name, email, vehicle, date, location, current_vehicle, time_frame]):
             raise HTTPException(status_code=400, detail="Missing required test drive booking fields.")
@@ -922,7 +933,9 @@ async def testdrive_webhook(request: Request):
                 "numeric_lead_score": initial_numeric_score, # Save numeric score
                 "booking_timestamp": datetime.now().isoformat(), 
                 "action_status": 'New Lead', 
-                "sales_notes": '' 
+                "sales_notes": '',
+                "phone": phone_raw,            # optional, for audit/visibility
+                "phone_e164": phone_e164,      # optional, normalized for WA
             }
             response = supabase.from_(SUPABASE_TABLE_NAME).insert(booking_data).execute()
             if response.data:
@@ -931,6 +944,9 @@ async def testdrive_webhook(request: Request):
                 logging.error(f"❌ Failed to save booking data to Supabase for request_id {request_id}. Response: {response}")
         except Exception as e:
             logging.error(f"❌ Error saving booking data to Supabase for request_id {request_id}: {e}", exc_info=True)
+        # ✅ Auto-kick WhatsApp only when we have a valid number
+        if phone_e164:
+            asyncio.create_task(_kick_wa_session(request_id))    
 
         return {"status": "success", "message": "Test drive request processed successfully and emails sent."}
 
