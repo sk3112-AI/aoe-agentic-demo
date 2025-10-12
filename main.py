@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import json
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, Response, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -233,6 +233,17 @@ class DraftAndSendEmailRequest(BaseModel):
     vehicle_name: str
     sales_notes: str
     vehicle_details: dict # Pass the relevant vehicle details from frontend
+
+@app.get("/wa/webhook")
+async def wa_verify(
+    mode: str | None = Query(None, alias="hub.mode"),
+    verify_token: str | None = Query(None, alias="hub.verify_token"),
+    challenge: str | None = Query(None, alias="hub.challenge"),
+):
+    # must return the raw challenge string when token matches
+    if mode == "subscribe" and verify_token == os.getenv("WEBHOOK_VERIFY_TOKEN", ""):
+        return Response(content=challenge or "", media_type="text/plain")
+    return Response(content="forbidden", status_code=403)
 
 @app.post("/draft-and-send-followup-email")
 async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
