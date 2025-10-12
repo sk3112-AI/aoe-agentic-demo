@@ -56,7 +56,7 @@ WA_USE_TEMPLATE      = os.getenv("WA_USE_TEMPLATE", "false").lower() == "true"
 WA_TEMPLATE_NAME     = os.getenv("WA_TEMPLATE_NAME", "bind_request_v1")
 WA_TEMPLATE_LANG     = os.getenv("WA_TEMPLATE_LANG", "en")
 
-GRAPH_SEND_URL = f"https://graph.facebook.com/v24.0/{PHONE_NUMBER_ID}/messages"
+GRAPH_SEND_URL = f"https://graph.facebook.com/v24.0/{WA_PHONE_NUMBER_ID}/messages"
 E164 = re.compile(r"^\+\d{7,15}$")
 
 # --- HARDCODED VEHICLE DATA ---
