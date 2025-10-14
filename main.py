@@ -229,6 +229,49 @@ def verify_token(token: str) -> dict:
         raise ValueError("expired")
     return data
 
+async def fetch_kb_links(model_key: str) -> dict | None:
+    """
+    Collect brochure/video links for a given model_key from faq_kb.
+    The table has one row per intent (e.g., brochure, video, specs...),
+    so we scan the set and pick the first non-empty links.
+    """
+    # If you have a generic "sb_select" that returns a list, use it; otherwise
+    # call your existing select with an appropriate limit and no "one" semantics.
+    rows = await sb_select(
+        "faq_kb",
+        {"model_key": model_key},
+        select="intent, brochure_url, video_url"
+    )
+
+    out = {}
+    for r in rows or []:
+        # Prefer explicit fields shown in your table
+        if not out.get("video_url") and r.get("video_url"):
+            out["video_url"] = r["video_url"]
+        if not out.get("pdf_url") and r.get("brochure_url"):
+            out["pdf_url"] = r["brochure_url"]
+
+    return out or None
+
+async def sb_select(table: str, filters: dict | None = None, select: str = "*", order: str | None = None, limit: int | None = None):
+    """
+    Returns a list of rows (unlike sb_select_one).
+    """
+    params = {"select": select}
+    if order:
+        params["order"] = order
+    if limit:
+        params["limit"] = limit
+    if filters:
+        for k, v in filters.items():
+            params[k] = f"eq.{v}"
+
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        r = await client.get(url, headers=SB_HEADERS, params=params)
+        r.raise_for_status()
+        return r.json()
+
 # -------------------- WA send helpers --------------------
 async def wa_send_text(wa_id: str, text: str) -> str:
     payload = {"messaging_product":"whatsapp","to":wa_id,"type":"text","text":{"body":text[:4096]}}
@@ -283,6 +326,29 @@ async def _kick_wa_session(rid: str):
         await wa_session_start_by_rid({"request_id": rid})
     except Exception as e:
         logging.exception("WA kickoff failed for %s: %s", rid, e)
+
+async def append_rolling_summary(rid: str, delta: str):
+    """
+    Appends a short delta into wa_conversations.rolling_summary
+    Key assumption: conversation_id == request_id  (change here if not).
+    """
+    # 1) read current conversation
+    conv = await sb_select_one("wa_conversations", {"conversation_id": rid}, select="rolling_summary")
+    cur = (conv or {}).get("rolling_summary") or ""
+
+    # 2) append + trim
+    new_rs = (cur + " " + delta).strip() if cur else delta
+    if len(new_rs) > 2000:
+        new_rs = ("..." + new_rs[-1997:])  # simple tail-trim for demo
+
+    # 3) upsert conversation
+    # (if conversation row may not exist yet, this upsert creates it)
+    payload = {
+        "conversation_id": rid,       # change if your PK is different
+        "rolling_summary": new_rs,
+        "updated_at": datetime.utcnow().isoformat() + "Z"
+    }
+    await sb_upsert("wa_conversations", payload, conflict="conversation_id")
 
 
 # --- DEBUG LOGGING ENDPOINT ---
@@ -484,6 +550,7 @@ async def draft_and_send_followup_email(request_body: DraftAndSendEmailRequest):
     except Exception as e:
         logging.error(f"🚨 An unexpected error occurred during follow-up email processing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
 # -------------------- Webhook: POST (events) --------------------
 @app.post("/wa/webhook")
 async def wa_events(request: Request):
@@ -499,7 +566,6 @@ async def wa_events(request: Request):
         for change in entry.get("changes", []):
             v = change.get("value", {})
 
-            # Message statuses are also inside value; optional to log
             for m in v.get("messages", []) or []:
                 mtype = m.get("type")
                 from_ = m.get("from")
@@ -538,6 +604,50 @@ async def wa_events(request: Request):
                                 "message_id": out_id, "request_id": rid, "wa_id": wa_id,
                                 "direction": "outbound", "body_text": text
                             })
+
+                        # --- FOLLOW-UP START ---
+                        # Requires helpers: fetch_kb_links(), build_tracked(), append_rolling_summary()
+                        try:
+                            # pull booking data for greeting + model_key
+                            b = await sb_select_one(
+                                SUPABASE_TABLE_NAME,
+                                {"request_id": rid},
+                                select="full_name, vehicle, model_key"
+                            )
+                            model_key = (b or {}).get("model_key") or (b or {}).get("vehicle")
+                            cust_name = (b or {}).get("full_name") or ""
+                            first_name = cust_name.split(" ")[0] if cust_name else ""
+
+                            video_url = pdf_url = None
+                            if model_key:
+                                kb = await fetch_kb_links(model_key)  # reads faq_kb by model_key
+                                if kb:
+                                    video_url = kb.get("video_url")
+                                    pdf_url   = kb.get("pdf_url")
+
+                            v_trk = build_tracked(video_url, rid, wa_id, kind="video") if video_url else None
+                            p_trk = build_tracked(pdf_url,   rid, wa_id, kind="brochure") if pdf_url else None
+
+                            lines = []
+                            greet = f"Thank you{', ' + first_name if first_name else ''}! Your test drive is confirmed."
+                            lines.append(greet + " Please check out the product brochure and videos:")
+                            if v_trk: lines.append(f"• Video overview: {v_trk}")
+                            if p_trk: lines.append(f"• Brochure (PDF): {p_trk}")
+                            followup_text = "\n".join(lines)
+
+                            if lines:
+                                fu_id = await wa_send_text(wa_id, followup_text)
+                                if fu_id:
+                                    await sb_insert("wa_messages", {
+                                        "message_id": fu_id, "request_id": rid, "wa_id": wa_id,
+                                        "direction": "outbound", "body_text": followup_text
+                                    })
+                                # Update conversation summary in wa_conversations
+                                await append_rolling_summary(rid, "WA: bound and sent brochure/video links.")
+                        except Exception as e:
+                            logging.warning(f"Follow-up WA message failed for {rid}: {e}")
+                        # --- FOLLOW-UP END ---
+
                     else:
                         await sb_insert("wa_messages", {
                             "message_id": mid, "request_id": None, "wa_id": wa_id,
@@ -616,6 +726,32 @@ class SendTextPayload(BaseModel):
     request_id: Optional[str] = None
     wa_id: str
     text: str
+
+@app.post("/wa/send_text_and_summarize")
+async def wa_send_text_and_summarize(p: SendAndSummarize):
+    if not E164.match(p.wa_id):
+        raise HTTPException(status_code=400, detail="wa_id must be E.164")
+    out_id = await wa_send_text(p.wa_id, p.text)
+    await sb_insert("wa_messages", {
+        "message_id": out_id, "request_id": p.request_id, "wa_id": p.wa_id,
+        "direction": "outbound", "body_text": p.text
+    })
+    # Update wa_conversations
+    delta = p.summary_delta or f"WA bot reply: “{p.text[:160]}”"
+    await append_rolling_summary(p.request_id, delta)
+
+    # optional action_status on your bookings table (keep if you still use it)
+    if p.action_status:
+        try:
+            await sb_upsert(SUPABASE_TABLE_NAME, {"request_id": p.request_id, "action_status": p.action_status}, conflict="request_id")
+        except Exception:
+            pass
+    return {"ok": True, "message_id": out_id}
+
+@app.post("/rolling_summary/append")
+async def api_append_rolling_summary(p: RollingSummaryUpdate):
+    await append_rolling_summary(p.request_id, p.delta)
+    return {"ok": True}
 
 @app.post("/wa/send_text")
 async def api_send_text(p: SendTextPayload):
