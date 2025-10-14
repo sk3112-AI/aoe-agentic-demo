@@ -726,6 +726,19 @@ class SendTextPayload(BaseModel):
     request_id: Optional[str] = None
     wa_id: str
     text: str
+# If not already imported:
+# from pydantic import BaseModel
+
+class SendAndSummarize(BaseModel):
+    request_id: str           # usually your request_id / conversation_id
+    wa_id: str                # E.164 like +91...
+    text: str                 # message to send
+    summary_delta: str | None = None  # optional extra summary line
+    action_status: str | None = None  # optional, to update bookings.action_status
+
+class RollingSummaryUpdate(BaseModel):
+    request_id: str
+    delta: str
 
 @app.post("/wa/send_text_and_summarize")
 async def wa_send_text_and_summarize(p: SendAndSummarize):
