@@ -273,6 +273,14 @@ async def sb_select(table: str, filters: dict | None = None, select: str = "*", 
         return r.json()
 
 # -------------------- WA send helpers --------------------
+def canonical_model_key(raw: str) -> str:
+    v = (raw or "").lower().strip()
+    if "thunder" in v: return "AOE Thunder"
+    if "apex"    in v: return "AOE Apex"
+    if "volt"    in v: return "AOE Volt"
+    # add mappings as you add models; fallback returns original
+    return (raw or "").strip()
+
 async def wa_send_text(wa_id: str, text: str) -> str:
     payload = {"messaging_product":"whatsapp","to":wa_id,"type":"text","text":{"body":text[:4096]}}
     headers = {"Authorization": f"Bearer {WA_TOKEN}","Content-Type":"application/json"}
@@ -612,11 +620,13 @@ async def wa_events(request: Request):
                             b = await sb_select_one(
                                 SUPABASE_TABLE_NAME,
                                 {"request_id": rid},
-                                select="full_name, vehicle, model_key"
+                                select="full_name, vehicle, booking_date"
                             )
-                            model_key = (b or {}).get("model_key") or (b or {}).get("vehicle")
+
                             cust_name = (b or {}).get("full_name") or ""
                             first_name = cust_name.split(" ")[0] if cust_name else ""
+                            vehicle = ((b or {}).get("vehicle") or "").strip()
+                            model_key = canonical_model_key(vehicle)  # <-- derive from vehicle
 
                             video_url = pdf_url = None
                             if model_key:
