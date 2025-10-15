@@ -229,6 +229,14 @@ def verify_token(token: str) -> dict:
         raise ValueError("expired")
     return data
 
+def build_tracked(url: str | None, rid: str, wa_id: str, kind: str = "wa_resource", ttl_days: int = 7) -> str | None:
+    if not url:
+        return None
+    exp = int(time.time()) + ttl_days * 86400
+    token = make_token({"rid": rid, "wa_id": wa_id, "url": url, "kind": kind, "exp": exp})
+    base = (TRACKING_BASE_URL or "").rstrip("/") + "/"
+    return f"{base}t/{token}"
+
 async def fetch_kb_links(model_key: str) -> dict | None:
     """
     Collect brochure/video links for a given model_key from faq_kb.
