@@ -268,7 +268,7 @@ async def sb_select(table: str, filters: dict | None = None, select: str = "*", 
 
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url, headers=SB_HEADERS, params=params)
+        r = await client.get(url, headers=_sb_hdr(), params=params)
         r.raise_for_status()
         return r.json()
 
