@@ -716,7 +716,7 @@ async def wa_events(request: Request):
                     # push to n8n as a normal user message
                     try:
                         await _notify_n8n({"event":"inbound_text","request_id":rid,"wa_id":wa_id,"text":txt,"message_id":mid})
-                            except Exception:
+                    except Exception:
                         pass
                     continue                     
     return {"ok": True}
