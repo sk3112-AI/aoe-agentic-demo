@@ -22,6 +22,7 @@ import os, re, hmac, hashlib, json, time, base64
 from datetime import datetime, timedelta, timezone
 import httpx
 import asyncio
+from urllib.parse import quote_plus
 
 # --- Lead score helper (single source of truth) ---
 def _label_from_numeric(score: int) -> str:
@@ -170,15 +171,37 @@ def _sb_hdr(json_body=False):
         h["Content-Type"] = "application/json"
     return h
 
+def _encode_eq(eq: dict) -> str:
+    # URL-encode each value, so "+919..." becomes "%2B919..."
+    return "&".join(f"{k}=eq.{quote_plus(str(v))}" for k, v in eq.items())
+
 async def sb_select_one(table: str, eq: dict, select: str="*") -> Optional[dict]:
-    qs = "&".join([f"{k}=eq.{v}" for k, v in eq.items()])
-    url = f"{SUPABASE_URL}/rest/v1/{table}?{qs}&select={select}&limit=1"
+    params = {"select": select, "limit": 1}
+    for k, v in eq.items():
+        params[k] = f"eq.{v}"
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(url, headers=_sb_hdr())
+        r = await c.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=_sb_hdr(), params=params)
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail=r.text)
     data = r.json()
     return data[0] if data else None
+
+
+async def sb_select(table: str, filters: dict | None = None, select: str = "*",
+                    order: str | None = None, limit: int | None = None):
+    params = {"select": select}
+    if order: params["order"] = order
+    if limit: params["limit"] = limit
+    if filters:
+        # encode each filter value
+        for k, v in filters.items():
+            params[k] = f"eq.{quote_plus(str(v))}"
+
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(url, headers=_sb_hdr(), params=params)
+        r.raise_for_status()
+        return r.json()
 
 async def sb_insert(table: str, row: dict):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
@@ -195,6 +218,33 @@ async def sb_upsert(table: str, row: dict, conflict: str):
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail=r.text)
     return r.json()
+
+async def upsert_conversation_on_bind(rid: str, wa_id: str):
+    # called when you bind on button click
+    now = datetime.utcnow().isoformat() + "Z"
+    payload = {
+        "conversation_id": rid,
+        "request_id": rid,
+        "wa_id": wa_id,
+        "started_at": now,
+        "last_message_at": now,
+        "message_count": 1,
+        "last_direction": "system"
+    }
+    await sb_upsert("wa_conversations", payload, conflict="conversation_id")
+
+async def upsert_conversation_on_inbound(rid: str | None, wa_id: str):
+    if not rid:
+        return
+    now = datetime.utcnow().isoformat() + "Z"
+    # Light update; if you want message_count increments, do it in n8n or via RPC
+    await sb_upsert("wa_conversations", {
+        "conversation_id": rid,
+        "request_id": rid,
+        "wa_id": wa_id,
+        "last_message_at": now,
+        "last_direction": "inbound"
+    }, conflict="conversation_id")
 
 # -------------------- utils --------------------
 import re
@@ -623,65 +673,52 @@ async def wa_events(request: Request):
 
                         # --- FOLLOW-UP START ---
                         # Requires helpers: fetch_kb_links(), build_tracked(), append_rolling_summary()
+                                    # simple follow-up
                         try:
-                            # pull booking data for greeting + model_key
-                            b = await sb_select_one(
-                                SUPABASE_TABLE_NAME,
-                                {"request_id": rid},
-                                select="full_name, vehicle, booking_date"
-                            )
-
-                            cust_name = (b or {}).get("full_name") or ""
-                            first_name = cust_name.split(" ")[0] if cust_name else ""
-                            vehicle = ((b or {}).get("vehicle") or "").strip()
-                            model_key = canonical_model_key(vehicle)  # <-- derive from vehicle
-
-                            video_url = pdf_url = None
-                            if model_key:
-                                kb = await fetch_kb_links(model_key)  # reads faq_kb by model_key
-                                if kb:
-                                    video_url = kb.get("video_url")
-                                    pdf_url   = kb.get("pdf_url")
-
-                            v_trk = build_tracked(video_url, rid, wa_id, kind="video") if video_url else None
-                            p_trk = build_tracked(pdf_url,   rid, wa_id, kind="brochure") if pdf_url else None
-
-                            lines = []
-                            greet = f"Thank you{', ' + first_name if first_name else ''}! Your test drive is confirmed."
-                            lines.append(greet + " Please check out the product brochure and videos:")
-                            if v_trk: lines.append(f"• Video overview: {v_trk}")
-                            if p_trk: lines.append(f"• Brochure (PDF): {p_trk}")
-                            followup_text = "\n".join(lines)
-
-                            if lines:
-                                fu_id = await wa_send_text(wa_id, followup_text)
-                                if fu_id:
-                                    await sb_insert("wa_messages", {
-                                        "message_id": fu_id, "request_id": rid, "wa_id": wa_id,
-                                        "direction": "outbound", "body_text": followup_text
-                                    })
-                                # Update conversation summary in wa_conversations
-                                await append_rolling_summary(rid, "WA: bound and sent brochure/video links.")
+                            b = await sb_select_one(SUPABASE_TABLE_NAME, {"request_id": rid}, select="full_name")
+                            first = ((b or {}).get("full_name") or "").split(" ")[0]
+                            followup_text = f"Thank you{', ' + first if first else ''}! Your test drive is confirmed. Please let me know if you have any questions."
+                            fu_id = await wa_send_text(wa_id, followup_text)
+                            if fu_id:
+                                await sb_insert("wa_messages", {
+                                    "message_id": fu_id, "request_id": rid, "wa_id": wa_id,
+                                    "direction": "outbound", "body_text": followup_text
+                                })
+                            await append_rolling_summary(rid, "WA: chat bound and follow-up sent.")
                         except Exception as e:
                             logging.warning(f"Follow-up WA message failed for {rid}: {e}")
-                        # --- FOLLOW-UP END ---
+
+                        # optional: notify n8n that session is bound
+                        try:
+                            await _notify_n8n({"event":"session_bound","request_id":rid,"wa_id":wa_id,"message_id":mid})
+                        except Exception:
+                            pass
 
                     else:
                         await sb_insert("wa_messages", {
                             "message_id": mid, "request_id": None, "wa_id": wa_id,
-                            "direction": "inbound", "body_text": "Reply (unmapped)"
+                            "direction": "inbound", "body_text": "Reply (unmapped)", "payload": m
                         })
                     continue
 
-                # B) Inbound text -> log (and later forward to n8n)
-                if mtype == "text":
+                # B) Inbound text -> log and handoff
+                elif mtype == "text":
                     txt = (m.get("text") or {}).get("body", "")
-                    bind = await sb_select_one("wa_request_links", {"wa_id": wa_id}, select="request_id")
-                    rid = bind["request_id"] if bind else None
+                    bind = await sb_select_one("wa_request_links", {"wa_id": wa_id}, select="request_id, active, expires_at")
+                    rid = bind["request_id"] if bind and bind.get("active") else None
+
                     await sb_insert("wa_messages", {
                         "message_id": mid, "request_id": rid, "wa_id": wa_id,
-                        "direction": "inbound", "body_text": txt
+                        "direction": "inbound", "body_text": txt, "payload": m
                     })
+                    await upsert_conversation_on_inbound(rid, wa_id)
+
+                    # push to n8n as a normal user message
+                    try:
+                        await _notify_n8n({"event":"inbound_text","request_id":rid,"wa_id":wa_id,"text":txt,"message_id":mid})
+                            except Exception:
+                        pass
+                    continue                     
     return {"ok": True}
 
 # -------------------- Start session message (manual wa_id) --------------------
