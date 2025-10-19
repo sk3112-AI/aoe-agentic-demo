@@ -60,6 +60,9 @@ WA_TEMPLATE_LANG     = os.getenv("WA_TEMPLATE_LANG", "en")
 GRAPH_SEND_URL = f"https://graph.facebook.com/v24.0/{WA_PHONE_NUMBER_ID}/messages"
 E164 = re.compile(r"^\+\d{7,15}$")
 
+N8N_INBOUND_URL = (os.getenv("N8N_INBOUND_URL") or os.getenv("N8N_WEBHOOK_URL", "")).rstrip("/")
+N8N_TOKEN       = os.getenv("N8N_TOKEN", "")
+
 # --- HARDCODED VEHICLE DATA ---
 # This dictionary replaces the web scraping logic for vehicle data.
 AOE_VEHICLE_DATA = {
@@ -416,6 +419,27 @@ async def append_rolling_summary(rid: str, delta: str):
     }
     await sb_upsert("wa_conversations", payload, conflict="conversation_id")
 
+async def _notify_n8n(payload: dict):
+    """
+    Fire-and-forget notify to n8n.
+    Sends JSON to the **production** Webhook URL (not /webhook-test).
+    """
+    if not N8N_INBOUND_URL:
+        logging.debug("N8N_INBOUND_URL not set; skipping _notify_n8n")
+        return
+
+    headers = {"Content-Type": "application/json"}
+    if N8N_TOKEN:
+        headers["X-Internal-Token"] = N8N_TOKEN
+
+    try:
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(N8N_INBOUND_URL, headers=headers, json=payload)
+            r.raise_for_status()
+        logging.debug(f"_notify_n8n OK: {payload.get('event')}")
+    except Exception as e:
+        logging.warning(f"_notify_n8n failed: {e}")
 
 # --- DEBUG LOGGING ENDPOINT ---
 @app.get("/debug-logs")
