@@ -399,25 +399,28 @@ async def _kick_wa_session(rid: str):
 async def append_rolling_summary(rid: str, delta: str):
     """
     Appends a short delta into wa_conversations.rolling_summary
-    Key assumption: conversation_id == request_id  (change here if not).
+    Schema reality: conversation_id is a UUID PK (auto), request_id is the unique business key.
+    So we key lookups/upserts by request_id, not conversation_id.
     """
-    # 1) read current conversation
-    conv = await sb_select_one("wa_conversations", {"conversation_id": rid}, select="rolling_summary")
-    cur = (conv or {}).get("rolling_summary") or ""
+    # 1) read current conversation by request_id
+    conv = await sb_select_one("wa_conversations", {"request_id": rid}, select="rolling_summary")
 
+    cur = (conv or {}).get("rolling_summary") or ""
     # 2) append + trim
     new_rs = (cur + " " + delta).strip() if cur else delta
     if len(new_rs) > 2000:
-        new_rs = ("..." + new_rs[-1997:])  # simple tail-trim for demo
+        new_rs = "..." + new_rs[-1997:]
 
-    # 3) upsert conversation
-    # (if conversation row may not exist yet, this upsert creates it)
+    # 3) upsert by request_id (include request_id in the payload)
+    now = datetime.utcnow().isoformat() + "Z"
     payload = {
-        "conversation_id": rid,       # change if your PK is different
+        "request_id": rid,             # <-- required by your schema (NOT NULL + UNIQUE)
         "rolling_summary": new_rs,
-        "updated_at": datetime.utcnow().isoformat() + "Z"
+        "updated_at": now,
+        "last_message_at": now         # optional but useful
     }
-    await sb_upsert("wa_conversations", payload, conflict="conversation_id")
+    # Do NOT set conversation_id here; let DB keep its UUID PK
+    await sb_upsert("wa_conversations", payload, conflict="request_id")
 
 async def _notify_n8n(payload: dict):
     """
