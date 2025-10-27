@@ -237,18 +237,24 @@ async def upsert_conversation_on_bind(rid: str, wa_id: str):
     await sb_upsert("wa_conversations", payload, conflict="conversation_id")
 
 async def upsert_conversation_on_inbound(rid: str | None, wa_id: str):
-    if not rid:
+    if not rid: # No request_id means user isn't bound yet, nothing to update
         return
+        
     now = datetime.utcnow().isoformat() + "Z"
-    # Light update; if you want message_count increments, do it in n8n or via RPC
-    await sb_upsert("wa_conversations", {
-        "conversation_id": rid,
+    
+    # Upsert based on request_id (your unique business key)
+    # Do NOT try to set conversation_id (the UUID Primary Key)
+    payload = {
         "request_id": rid,
-        "wa_id": wa_id,
+        "wa_id": wa_id,              # Make sure wa_id is also present if needed for filter
         "last_message_at": now,
         "last_direction": "inbound"
-    }, conflict="conversation_id")
-
+        # Add other fields you might want to create on first upsert if needed
+    }
+    
+    # The conflict target MUST match your unique business key column
+    await sb_upsert("wa_conversations", payload, conflict="request_id")
+    
 # -------------------- utils --------------------
 import re
 E164_RE = re.compile(r"^\+\d{7,15}$")
