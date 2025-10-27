@@ -209,9 +209,32 @@ async def sb_select(table: str, filters: dict | None = None, select: str = "*",
 async def sb_insert(table: str, row: dict):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(url, headers={**_sb_hdr(True), "Prefer":"return=representation"}, json=row)
+        r = await c.post(
+            url,
+            headers={**_sb_hdr(True), "Prefer": "return=representation"},
+            json=row
+        )
+
+    if r.status_code == 409:
+        # Supabase/PostgREST returns 409 on unique violations (e.g., same message_id)
+        # Only swallow for idempotent log tables.
+        if table in ("wa_messages", "wa_outbound_log"):
+            try:
+                err = r.json()
+                # Optional: be extra safe and check PG code for unique_violation ("23505")
+                if isinstance(err, dict) and err.get("code") in ("23505",):
+                    logging.info("Duplicate insert on %s (idempotent). Treating as success.", table)
+                    return []
+            except Exception:
+                # Even if body isn't JSON, still treat as idempotent for these tables
+                logging.info("Duplicate insert on %s (no JSON body). Treating as success.", table)
+                return []
+        # For any other table, keep the failure visible
+        raise HTTPException(status_code=502, detail=r.text)
+
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail=r.text)
+
     return r.json()
 
 async def sb_upsert(table: str, row: dict, conflict: str):
