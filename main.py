@@ -726,7 +726,7 @@ async def wa_events(request: Request):
 
                         # optional: notify n8n that session is bound
                         try:
-                            await _notify_n8n({"event":"session_bound","request_id":rid,"wa_id":wa_id,"user_text": reply_title,"message_id":mid})
+                            await _notify_n8n({"event":"session_bound","request_id":rid,"wa_id":wa_id,"text": reply_title,"user_text": reply_title,"message_id":mid})
                         except Exception:
                             pass
 
