@@ -336,26 +336,6 @@ async def fetch_kb_links(model_key: str) -> dict | None:
             out["pdf_url"] = r["brochure_url"]
 
     return out or None
-
-async def sb_select(table: str, filters: dict | None = None, select: str = "*", order: str | None = None, limit: int | None = None):
-    """
-    Returns a list of rows (unlike sb_select_one).
-    """
-    params = {"select": select}
-    if order:
-        params["order"] = order
-    if limit:
-        params["limit"] = limit
-    if filters:
-        for k, v in filters.items():
-            params[k] = f"eq.{v}"
-
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url, headers=_sb_hdr(), params=params)
-        r.raise_for_status()
-        return r.json()
-
 # -------------------- WA send helpers --------------------
 def canonical_model_key(raw: str) -> str:
     v = (raw or "").lower().strip()
