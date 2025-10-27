@@ -178,6 +178,18 @@ def _encode_eq(eq: dict) -> str:
     # URL-encode each value, so "+919..." becomes "%2B919..."
     return "&".join(f"{k}=eq.{quote_plus(str(v))}" for k, v in eq.items())
 
+async def sb_select_one(table: str, eq: dict, select: str="*") -> Optional[dict]:
+    params = {"select": select, "limit": 1}
+    for k, v in eq.items():
+        params[k] = f"eq.{quote_plus(str(v))}"  # <-- handle + in wa_id
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=_sb_hdr(), params=params)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail=r.text)
+    data = r.json()
+    return data[0] if data else None
+
+
 async def sb_select(table: str, filters: dict | None = None, select: str = "*",
                     order: str | None = None, limit: int | None = None):
     params = {"select": select}
