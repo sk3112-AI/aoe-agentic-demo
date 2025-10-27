@@ -207,7 +207,6 @@ async def sb_select(table: str, filters: dict | None = None, select: str = "*",
         return r.json()
 
 async def sb_insert(table: str, row: dict):
-async def sb_insert(table: str, row: dict):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(url, headers={**_sb_hdr(True), "Prefer":"return=representation"}, json=row)
@@ -406,7 +405,6 @@ async def append_rolling_summary(rid: str, delta: str):
     # 1) read current conversation by request_id
     conv = await sb_select_one("wa_conversations", {"request_id": rid}, select="rolling_summary")
 
-
     cur = (conv or {}).get("rolling_summary") or ""
     # 2) append + trim
     new_rs = (cur + " " + delta).strip() if cur else delta
@@ -524,7 +522,7 @@ async def update_booking(request_body: UpdateBookingRequest):
     except Exception as e:
         logging.error(f"Error updating booking {request_body.request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
+           
 
 # NEW ENDPOINT 2: Draft and Send Follow-up Email
 class DraftAndSendEmailRequest(BaseModel):
@@ -690,13 +688,11 @@ async def wa_events(request: Request):
                         out_id = await wa_send_text(wa_id, text)
 
                         await sb_insert("wa_messages", {
-                        await sb_insert("wa_messages", {
                             "message_id": mid, "request_id": rid, "wa_id": wa_id,
                             "direction": "inbound",
                             "body_text": (m.get("interactive") or {}).get("button_reply", {}).get("title") or "Reply"
                         })
                         if out_id:
-                            await sb_insert("wa_messages", {
                             await sb_insert("wa_messages", {
                                 "message_id": out_id, "request_id": rid, "wa_id": wa_id,
                                 "direction": "outbound", "body_text": text
@@ -711,7 +707,6 @@ async def wa_events(request: Request):
                             followup_text = f"Thank you{', ' + first if first else ''}! Your test drive is confirmed. Please let me know if you have any questions."
                             fu_id = await wa_send_text(wa_id, followup_text)
                             if fu_id:
-                                await sb_insert("wa_messages", {
                                 await sb_insert("wa_messages", {
                                     "message_id": fu_id, "request_id": rid, "wa_id": wa_id,
                                     "direction": "outbound", "body_text": followup_text
@@ -728,7 +723,6 @@ async def wa_events(request: Request):
 
                     else:
                         await sb_insert("wa_messages", {
-                        await sb_insert("wa_messages", {
                             "message_id": mid, "request_id": None, "wa_id": wa_id,
                             "direction": "inbound", "body_text": "Reply (unmapped)", "payload": m
                         })
@@ -740,7 +734,6 @@ async def wa_events(request: Request):
                     bind = await sb_select_one("wa_request_links", {"wa_id": wa_id}, select="request_id, active, expires_at")
                     rid = bind["request_id"] if bind and bind.get("active") else None
 
-                    await sb_insert("wa_messages", {
                     await sb_insert("wa_messages", {
                         "message_id": mid, "request_id": rid, "wa_id": wa_id,
                         "direction": "inbound", "body_text": txt, "payload": m
@@ -776,8 +769,6 @@ async def wa_session_start(p: SessionKickoff):
         marker = "session_button"
 
     await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": p.wa_id, "request_id": p.request_id, "template_name": marker})
-    await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": p.wa_id, "request_id": p.request_id, "template_name": marker})
-    await sb_insert("wa_messages", {"message_id": msg_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
     await sb_insert("wa_messages", {"message_id": msg_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
     return {"ok": True, "message_id": msg_id}
 
@@ -809,8 +800,6 @@ async def wa_session_start_by_rid(payload: dict):
         marker = "session_button"
 
     await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": wa_id, "request_id": rid, "template_name": marker})
-    await sb_insert("wa_outbound_log", {"message_id": msg_id, "wa_id": wa_id, "request_id": rid, "template_name": marker})
-    await sb_insert("wa_messages", {"message_id": msg_id, "request_id": rid, "wa_id": wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
     await sb_insert("wa_messages", {"message_id": msg_id, "request_id": rid, "wa_id": wa_id, "direction": "outbound", "body_text": text if not WA_USE_TEMPLATE else None})
     return {"ok": True, "message_id": msg_id, "wa_id": wa_id}
 
@@ -839,7 +828,6 @@ async def wa_send_text_and_summarize(p: SendAndSummarize):
         raise HTTPException(status_code=400, detail="wa_id must be E.164")
     out_id = await wa_send_text(p.wa_id, p.text)
     await sb_insert("wa_messages", {
-    await sb_insert("wa_messages", {
         "message_id": out_id, "request_id": p.request_id, "wa_id": p.wa_id,
         "direction": "outbound", "body_text": p.text
     })
@@ -866,7 +854,6 @@ async def api_send_text(p: SendTextPayload):
         raise HTTPException(status_code=400, detail="wa_id must be E.164")
     out_id = await wa_send_text(p.wa_id, p.text)
     await sb_insert("wa_messages", {"message_id": out_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": p.text})
-    await sb_insert("wa_messages", {"message_id": out_id, "request_id": p.request_id, "wa_id": p.wa_id, "direction": "outbound", "body_text": p.text})
     return {"ok": True, "message_id": out_id}
 
 # -------------------- Tracked-link redirect --------------------
@@ -877,7 +864,6 @@ async def track_and_redirect(token: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:
-        await sb_insert("link_clicks", {"token": token, "request_id": data.get("rid"), "wa_id": data.get("wa_id")})
         await sb_insert("link_clicks", {"token": token, "request_id": data.get("rid"), "wa_id": data.get("wa_id")})
     except Exception:
         pass
@@ -1062,7 +1048,7 @@ async def testdrive_webhook(request: Request):
 
         # --- Rule-Based Lead Scoring ---
         logging.info(f"Applying rule-based lead scoring for {email}...")
-
+        
         initial_numeric_score = 0
         if time_frame == "0-3-months":
             initial_numeric_score = 10
@@ -1072,7 +1058,7 @@ async def testdrive_webhook(request: Request):
             initial_numeric_score = 5
         elif time_frame == "exploring-now": # CORRECTED: Changed from "exploring" to "exploring-now"
             initial_numeric_score = 2
-
+        
         # Determine initial text lead_score based on numeric score
         lead_score_text = _label_from_numeric(initial_numeric_score)
 
@@ -1197,3 +1183,4 @@ async def testdrive_webhook(request: Request):
 
     except Exception as e:
         logging.error(f"🚨 An unexpected error occurred during webhook processing: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
