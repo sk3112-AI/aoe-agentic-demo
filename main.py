@@ -178,18 +178,6 @@ def _encode_eq(eq: dict) -> str:
     # URL-encode each value, so "+919..." becomes "%2B919..."
     return "&".join(f"{k}=eq.{quote_plus(str(v))}" for k, v in eq.items())
 
-async def sb_select_one(table: str, eq: dict, select: str="*") -> Optional[dict]:
-    params = {"select": select, "limit": 1}
-    for k, v in eq.items():
-        params[k] = f"eq.{v}"
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=_sb_hdr(), params=params)
-    if r.status_code >= 300:
-        raise HTTPException(status_code=502, detail=r.text)
-    data = r.json()
-    return data[0] if data else None
-
-
 async def sb_select(table: str, filters: dict | None = None, select: str = "*",
                     order: str | None = None, limit: int | None = None):
     params = {"select": select}
@@ -697,6 +685,12 @@ async def wa_events(request: Request):
                         if row:
                             rid = row["request_id"]
 
+                    iobj = (m.get("interactive") or {})
+                    reply_title = (
+                        ((iobj.get("button_reply") or {}).get("title")) or
+                        ((iobj.get("list_reply")   or {}).get("title")) or
+                        "Reply"
+                    )  
                     if rid and wa_id:
                         now = datetime.now(timezone.utc)
                         exp = now + timedelta(hours=48)
@@ -713,7 +707,7 @@ async def wa_events(request: Request):
                         await sb_insert("wa_messages", {
                             "message_id": mid, "request_id": rid, "wa_id": wa_id,
                             "direction": "inbound",
-                            "body_text": (m.get("interactive") or {}).get("button_reply", {}).get("title") or "Reply"
+                            "body_text": reply_title,
                         })
                         if out_id:
                             await sb_insert("wa_messages", {
@@ -740,7 +734,7 @@ async def wa_events(request: Request):
 
                         # optional: notify n8n that session is bound
                         try:
-                            await _notify_n8n({"event":"session_bound","request_id":rid,"wa_id":wa_id,"message_id":mid})
+                            await _notify_n8n({"event":"session_bound","request_id":rid,"wa_id":wa_id,"user_text": reply_title,"message_id":mid})
                         except Exception:
                             pass
 
@@ -754,12 +748,18 @@ async def wa_events(request: Request):
                 # B) Inbound text -> log and handoff
                 elif mtype == "text":
                     txt = (m.get("text") or {}).get("body", "")
+                    if not txt.strip():
+                        txt = (m.get("image") or {}).get("caption", "") or \
+                        (m.get("video") or {}).get("caption", "") or \
+                        (m.get("audio") or {}).get("caption", "") or ""
+                    txt = txt.strip()
+
                     bind = await sb_select_one("wa_request_links", {"wa_id": wa_id}, select="request_id, active, expires_at")
                     rid = bind["request_id"] if bind and bind.get("active") else None
 
                     await sb_insert("wa_messages", {
                         "message_id": mid, "request_id": rid, "wa_id": wa_id,
-                        "direction": "inbound", "body_text": txt, "payload": m
+                        "direction": "inbound", "body_text": txt or "[empty]", "payload": m
                     })
                     await upsert_conversation_on_inbound(rid, wa_id)
 
