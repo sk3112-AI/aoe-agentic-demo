@@ -743,8 +743,9 @@ async def wa_events(request: Request):
                     # push to n8n as a normal user message
                     try:
                         await _notify_n8n({"event":"inbound_text","request_id":rid,"wa_id":wa_id,"text":txt,"message_id":mid})
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.error(f"!!! N8N NOTIFICATION FAILED: {e}", exc_info=True)
+                        pass # Still pass so it doesn't crash, but you see the error
                     continue                     
     return {"ok": True}
 
